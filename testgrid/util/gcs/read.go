@@ -95,7 +95,11 @@ func ListBuilds(ctx context.Context, client *storage.Client, path Path) (Builds,
 		}
 
 		// if this is a link under directory, resolve the build value
-		if link := objAttrs.Metadata["link"]; len(link) > 0 {
+		link := objAttrs.Metadata["link"]
+		if len(link) == 0 {
+			link = objAttrs.Metadata["x-goog-meta-link"]
+		}
+		if len(link) > 0 {
 			// links created by bootstrap.py have a space
 			link = strings.TrimSpace(link)
 			u, err := url.Parse(link)
