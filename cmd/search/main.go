@@ -74,7 +74,8 @@ func (o *options) Run() error {
 
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
-		mux.HandleFunc("/", o.index)
+		mux.HandleFunc("/config", o.handleConfig)
+		mux.HandleFunc("/", o.handleIndex)
 
 		go func() {
 			glog.Infof("Listening on %s", o.ListenAddr)
@@ -138,7 +139,17 @@ type nopFlusher struct{}
 
 func (_ nopFlusher) Flush() {}
 
-func (o *options) index(w http.ResponseWriter, req *http.Request) {
+func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
+	data, err := ioutil.ReadFile(o.ConfigPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to read config: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(data)
+}
+
+func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		flusher = nopFlusher{}
@@ -182,88 +193,94 @@ func (o *options) index(w http.ResponseWriter, req *http.Request) {
 		options = append(options, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(searchType), selected, template.HTMLEscapeString(searchType)))
 	}
 
-	fmt.Fprintf(w, htmlPageStart, "Search results")
+	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
 	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(options, ""))
 
-	if len(search) > 0 {
-		flusher.Flush()
-
-		count := 0
-		start := time.Now()
-		var lastName string
-		fmt.Fprintf(w, `<div class="pl-3">`)
-
-		bw := bufio.NewWriterSize(w, 256*1024)
-		err := executeGrep(req.Context(), o.generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
-			if count == 5 || count%50 == 0 {
-				bw.Flush()
-			}
-			if lastName == name {
-				fmt.Fprintf(bw, "\n&mdash;\n\n")
-			} else {
-				lastName = name
-				if count > 0 {
-					fmt.Fprintf(bw, `</pre></div>`)
-				}
-				parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
-				last := len(parts) - 1
-				switch {
-				case last > 2 && bytes.Equal(parts[last], []byte("junit.failures")):
-					prefix := string(bytes.Join(parts[:last], []byte("/")))
-					if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-						name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-						fmt.Fprintf(bw, `<div class="mb-4"><h5>junit from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
-					} else {
-						name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-						fmt.Fprintf(bw, `<div class="mb-4"><h5>junit from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
-					}
-				default:
-					fmt.Fprintf(bw, `<div class="mb-4"><h5>%s</h5><pre class="small">`, template.HTMLEscapeString(name))
-				}
-			}
-
-			// remove empty leading and trailing lines
-			var lines [][]byte
-			for _, m := range matches {
-				line := bytes.TrimRight(m.Bytes(), " ")
-				if len(line) == 0 {
-					continue
-				}
-				lines = append(lines, line)
-			}
-			for i := len(lines) - 1; i >= 0; i-- {
-				if len(lines[i]) != 0 {
-					break
-				}
-				lines = lines[:i]
-			}
-
-			for _, line := range lines {
-				template.HTMLEscape(bw, line)
-				fmt.Fprintln(bw)
-			}
-			if moreLines > 0 {
-				fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
-			}
-			count++
-		})
-		if count > 0 {
-			fmt.Fprintf(bw, `</pre></div>`)
-		}
-		if err := bw.Flush(); err != nil {
-			glog.Errorf("Unable to flush results buffer: %v", err)
-		}
-		duration := time.Now().Sub(start)
-		glog.V(2).Infof("Search completed in %s", duration)
-		if err != nil && err != io.EOF {
-			glog.Errorf("Command exited with error: %v", err)
-			fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
-			fmt.Fprintf(w, htmlPageEnd)
-			return
-		}
-		fmt.Fprintf(w, `<p class="small"><em>Found %d results in %s</em></p>`, count, duration)
-		fmt.Fprintf(w, "</div>")
+	// display the empty results page
+	if len(search) == 0 {
+		fmt.Fprintf(w, htmlEmptyPage)
+		fmt.Fprintf(w, htmlPageEnd)
+		return
 	}
+
+	// perform a search
+	flusher.Flush()
+
+	count := 0
+	start := time.Now()
+	var lastName string
+	fmt.Fprintf(w, `<div class="pl-3">`)
+
+	bw := bufio.NewWriterSize(w, 256*1024)
+	err := executeGrep(req.Context(), o.generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
+		if count == 5 || count%50 == 0 {
+			bw.Flush()
+		}
+		if lastName == name {
+			fmt.Fprintf(bw, "\n&mdash;\n\n")
+		} else {
+			lastName = name
+			if count > 0 {
+				fmt.Fprintf(bw, `</pre></div>`)
+			}
+			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
+			last := len(parts) - 1
+			switch {
+			case last > 2 && bytes.Equal(parts[last], []byte("junit.failures")):
+				prefix := string(bytes.Join(parts[:last], []byte("/")))
+				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
+					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
+					fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">junit from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+				} else {
+					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
+					fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">junit from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+				}
+			default:
+				fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">%s</h5><pre class="small">`, template.HTMLEscapeString(name))
+			}
+		}
+
+		// remove empty leading and trailing lines
+		var lines [][]byte
+		for _, m := range matches {
+			line := bytes.TrimRight(m.Bytes(), " ")
+			if len(line) == 0 {
+				continue
+			}
+			lines = append(lines, line)
+		}
+		for i := len(lines) - 1; i >= 0; i-- {
+			if len(lines[i]) != 0 {
+				break
+			}
+			lines = lines[:i]
+		}
+
+		for _, line := range lines {
+			template.HTMLEscape(bw, line)
+			fmt.Fprintln(bw)
+		}
+		if moreLines > 0 {
+			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
+		}
+		count++
+	})
+	if count > 0 {
+		fmt.Fprintf(bw, `</pre></div>`)
+	}
+	if err := bw.Flush(); err != nil {
+		glog.Errorf("Unable to flush results buffer: %v", err)
+	}
+	duration := time.Now().Sub(start)
+	glog.V(2).Infof("Search completed in %s", duration)
+	if err != nil && err != io.EOF {
+		glog.Errorf("Command exited with error: %v", err)
+		fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
+		fmt.Fprintf(w, htmlPageEnd)
+		return
+	}
+	fmt.Fprintf(w, `<p class="small"><em>Found %d results in %s</em></p>`, count, duration)
+	fmt.Fprintf(w, "</div>")
 
 	fmt.Fprintf(w, htmlPageEnd)
 }
@@ -290,9 +307,22 @@ const htmlPageEnd = `
 
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
-	<div class="input-group input-group-lg"><input name="search" class="form-control col-auto" value="%s">
+	<div class="input-group input-group-lg"><input name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
 	<select name="type" class="form-control col-2" onchange="this.form.submit();">%s</select>
 	<input class="btn" type="submit" value="Search">
 	</div>
 </form>
+`
+
+const htmlEmptyPage = `
+<div class="ml-3" style="margin-top: 3rem; color: #666;">
+<p>Find test failures from <a href="/config">a subset of CI jobs</a> in <a href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
+<p>The search input will use <a href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a>.</p>
+<p>Searches are case-insensitive (using ripgrep "smart casing")</p>
+<p>Examples:
+<ul>
+<li><code>timeout</code> - all JUnit failures with 'timeout' in the result</li>
+<li><code>status code \d{3}\s</code> - all failures that contain 'status code' followed by a 3 digit number</li>
+</ul>
+</div>
 `
