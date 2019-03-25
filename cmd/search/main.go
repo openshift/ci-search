@@ -211,6 +211,22 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		}
 		index.Context = num
 	}
+	contextOptions := []string{
+		fmt.Sprintf(`<option value="0" %s>No context</option>`, intSelected(0, index.Context)),
+		fmt.Sprintf(`<option value="1" %s>1 lines</option>`, intSelected(1, index.Context)),
+		fmt.Sprintf(`<option value="2" %s>2 lines</option>`, intSelected(2, index.Context)),
+		fmt.Sprintf(`<option value="3" %s>3 lines</option>`, intSelected(3, index.Context)),
+		fmt.Sprintf(`<option value="5" %s>5 lines</option>`, intSelected(5, index.Context)),
+		fmt.Sprintf(`<option value="7" %s>7 lines</option>`, intSelected(7, index.Context)),
+		fmt.Sprintf(`<option value="10" %s>10 lines</option>`, intSelected(10, index.Context)),
+		fmt.Sprintf(`<option value="15" %s>15 lines</option>`, intSelected(15, index.Context)),
+	}
+	switch index.Context {
+	case 0, 1, 2, 3, 5, 7, 10, 15:
+	default:
+		context := template.HTMLEscapeString(strconv.Itoa(index.Context))
+		contextOptions = append(contextOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, context, context))
+	}
 
 	switch req.FormValue("type") {
 	case "junit":
@@ -259,7 +275,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(searchTypeOptions, ""))
+	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
 	if len(search) == 0 {
@@ -352,6 +368,13 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, htmlPageEnd)
 }
 
+func intSelected(current, expected int) string {
+	if current == expected {
+		return "selected"
+	}
+	return ""
+}
+
 func durationSelected(current, expected time.Duration) string {
 	if current == expected {
 		return "selected"
@@ -370,7 +393,7 @@ const htmlPageStart = `
 </style>
 </head>
 <body>
-<div class="container">
+<div class="container-fluid">
 `
 
 const htmlPageEnd = `
@@ -381,9 +404,10 @@ const htmlPageEnd = `
 
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
-	<div class="input-group input-group-lg"><input name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
+	<div class="input-group input-group-lg"><input autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
 	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
-	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
+	<select name="context" class="form-control col-1" onchange="this.form.submit();">%s</select>
+	<!--<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>-->
 	<input class="btn" type="submit" value="Search">
 	</div>
 </form>
@@ -399,6 +423,7 @@ const htmlEmptyPage = `
 <li><code>timeout</code> - all JUnit failures with 'timeout' in the result</li>
 <li><code>status code \d{3}\s</code> - all failures that contain 'status code' followed by a 3 digit number</li>
 </ul>
+<p>You can alter the age of results to search with the dropdown next to the search bar. Note that older results are pruned and may not be available after 14 days.</p>
 <p>Currently indexing %s across %d entries</p>
 </div>
 `
