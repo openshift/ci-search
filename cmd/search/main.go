@@ -130,7 +130,7 @@ func (o *options) Run() error {
 
 		glog.Infof("Starting build-indexer every %s", o.Interval)
 		wait.Forever(func() {
-			args := []string{"--config", o.ConfigPath, "--path", o.Path}
+			args := []string{"--config", o.ConfigPath, "--path", o.Path, "--max-results", "500"}
 			if len(o.GCPServiceAccount) > 0 {
 				args = append(args, "--gcp-service-account", o.GCPServiceAccount)
 			}
@@ -242,13 +242,15 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		index.MaxAge = o.MaxAge
 	}
 	maxAgeOptions := []string{
+		fmt.Sprintf(`<option value="6h" %s>6h</option>`, durationSelected(6*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="12h" %s>12h</option>`, durationSelected(12*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="24h" %s>1d</option>`, durationSelected(24*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="48h" %s>2d</option>`, durationSelected(48*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="168h" %s>7d</option>`, durationSelected(168*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="336h" %s>14d</option>`, durationSelected(336*time.Hour, index.MaxAge)),
 	}
 	switch index.MaxAge {
-	case 12 * time.Hour, 24 * time.Hour, 168 * time.Hour, 336 * time.Hour:
+	case 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 48 * time.Hour, 168 * time.Hour, 336 * time.Hour:
 	case 0:
 		maxAgeOptions = append(maxAgeOptions, `<option value="0" selected>No limit</option>`)
 	default:
@@ -380,8 +382,8 @@ const htmlPageEnd = `
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
 	<div class="input-group input-group-lg"><input name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
-	<select name="maxAge" class="form-control col-2" onchange="this.form.submit();">%s</select>
-	<select name="type" class="form-control col-2" onchange="this.form.submit();">%s</select>
+	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
+	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<input class="btn" type="submit" value="Search">
 	</div>
 </form>

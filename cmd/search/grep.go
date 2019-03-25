@@ -329,8 +329,18 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 		initial = copied
 	}
 
-	for _, path := range paths {
-		initial = append(initial, path.path)
+	if index.MaxAge > 0 {
+		oldest := time.Now().Add(-index.MaxAge)
+		for _, path := range paths {
+			if path.age.Before(oldest) {
+				break
+			}
+			initial = append(initial, path.path)
+		}
+	} else {
+		for _, path := range paths {
+			initial = append(initial, path.path)
+		}
 	}
 	return initial
 }
