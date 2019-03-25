@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	units "github.com/docker/go-units"
 	"github.com/golang/glog"
 	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
@@ -30,6 +31,7 @@ func main() {
 
 	opt := &options{
 		ListenAddr: ":8080",
+		MaxAge:     14 * 24 * time.Hour,
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -44,6 +46,7 @@ func main() {
 	flag.StringVar(&opt.ListenAddr, "listen", opt.ListenAddr, "The address to serve release information on")
 	flag.AddGoFlag(original.Lookup("v"))
 
+	flag.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
 	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "The interval to index jobs. Set to 0 (the default) to disable indexing.")
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "Path to a GCP service account file.")
@@ -58,16 +61,25 @@ type options struct {
 	Path       string
 
 	// arguments to indexing
+	MaxAge            time.Duration
 	Interval          time.Duration
 	GCPServiceAccount string
 	ConfigPath        string
 
 	generator CommandGenerator
+	accessor  PathAccessor
 }
 
 func (o *options) Run() error {
 	var err error
-	o.generator, err = NewCommandGenerator(o.Path)
+
+	indexedPaths := &pathIndex{base: o.Path, maxAge: o.MaxAge}
+	if err := indexedPaths.Load(); err != nil {
+		return err
+	}
+	o.accessor = indexedPaths
+
+	o.generator, err = NewCommandGenerator(o.Path, o.accessor)
 	if err != nil {
 		return err
 	}
@@ -95,8 +107,20 @@ func (o *options) Run() error {
 				glog.Infof("Last indexed at %s", indexedAt)
 			}
 		}
+
+		now := time.Now()
+
+		if o.MaxAge > 0 {
+			glog.Infof("Results expire after %s", o.MaxAge)
+			expiredAt := now.Add(-o.MaxAge)
+			if expiredAt.After(indexedAt) {
+				glog.Infof("Last index time is older than the allowed max age, setting to %s", expiredAt)
+				indexedAt = expiredAt
+			}
+		}
+
 		if !indexedAt.IsZero() {
-			sinceLast := time.Now().Sub(indexedAt)
+			sinceLast := now.Sub(indexedAt)
 			if sinceLast < o.Interval {
 				sleep := o.Interval - sinceLast
 				glog.Infof("Indexer will start in %s", sleep.Truncate(time.Second))
@@ -128,6 +152,15 @@ func (o *options) Run() error {
 			glog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
 			if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
 				glog.Errorf("Failed to write index marker: %v", err)
+			}
+
+			for i := 0; i < 3; i++ {
+				err := indexedPaths.Load()
+				if err == nil {
+					break
+				}
+				glog.Errorf("Failed to update indexed paths, retrying: %v", err)
+				time.Sleep(time.Second)
 			}
 		}, o.Interval)
 	}
@@ -162,11 +195,14 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	index := &Index{
 		Context: 2,
+		MaxAge:  7 * 24 * time.Hour,
 	}
+
 	search := req.FormValue("search")
 	if len(search) > 0 {
 		index.Search = search
 	}
+
 	if context := req.FormValue("context"); len(context) > 0 {
 		num, err := strconv.Atoi(context)
 		if err != nil || num < 0 || num > 15 {
@@ -175,6 +211,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		}
 		index.Context = num
 	}
+
 	switch req.FormValue("type") {
 	case "junit":
 		index.SearchType = "junit"
@@ -184,21 +221,48 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "?search must be 'junit', 'all'", http.StatusInternalServerError)
 		return
 	}
-	var options []string
+	var searchTypeOptions []string
 	for _, searchType := range []string{"junit", "all"} {
 		var selected string
 		if searchType == index.SearchType {
 			selected = "selected"
 		}
-		options = append(options, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(searchType), selected, template.HTMLEscapeString(searchType)))
+		searchTypeOptions = append(searchTypeOptions, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(searchType), selected, template.HTMLEscapeString(searchType)))
+	}
+
+	if value := req.FormValue("maxAge"); len(value) > 0 {
+		maxAge, err := time.ParseDuration(value)
+		if err != nil || maxAge < 0 {
+			http.Error(w, "?maxAge must be a non-negative duration", http.StatusInternalServerError)
+			return
+		}
+		index.MaxAge = maxAge
+	}
+	if o.MaxAge > 0 && o.MaxAge < index.MaxAge {
+		index.MaxAge = o.MaxAge
+	}
+	maxAgeOptions := []string{
+		fmt.Sprintf(`<option value="12h" %s>12h</option>`, durationSelected(12*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="24h" %s>1d</option>`, durationSelected(24*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="168h" %s>7d</option>`, durationSelected(168*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="336h" %s>14d</option>`, durationSelected(336*time.Hour, index.MaxAge)),
+	}
+	switch index.MaxAge {
+	case 12 * time.Hour, 24 * time.Hour, 168 * time.Hour, 336 * time.Hour:
+	case 0:
+		maxAgeOptions = append(maxAgeOptions, `<option value="0" selected>No limit</option>`)
+	default:
+		maxAge := template.HTMLEscapeString(index.MaxAge.String())
+		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
 	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(options, ""))
+	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
 	if len(search) == 0 {
-		fmt.Fprintf(w, htmlEmptyPage)
+		stats := o.accessor.Stats()
+		fmt.Fprintf(w, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
 		fmt.Fprintf(w, htmlPageEnd)
 		return
 	}
@@ -279,10 +343,18 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, htmlPageEnd)
 		return
 	}
-	fmt.Fprintf(w, `<p class="small"><em>Found %d results in %s</em></p>`, count, duration)
+	stats := o.accessor.Stats()
+	fmt.Fprintf(w, `<p class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
 	fmt.Fprintf(w, "</div>")
 
 	fmt.Fprintf(w, htmlPageEnd)
+}
+
+func durationSelected(current, expected time.Duration) string {
+	if current == expected {
+		return "selected"
+	}
+	return ""
 }
 
 const htmlPageStart = `
@@ -308,6 +380,7 @@ const htmlPageEnd = `
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
 	<div class="input-group input-group-lg"><input name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
+	<select name="maxAge" class="form-control col-2" onchange="this.form.submit();">%s</select>
 	<select name="type" class="form-control col-2" onchange="this.form.submit();">%s</select>
 	<input class="btn" type="submit" value="Search">
 	</div>
@@ -324,5 +397,6 @@ const htmlEmptyPage = `
 <li><code>timeout</code> - all JUnit failures with 'timeout' in the result</li>
 <li><code>status code \d{3}\s</code> - all failures that contain 'status code' followed by a 3 digit number</li>
 </ul>
+<p>Currently indexing %s across %d entries</p>
 </div>
 `

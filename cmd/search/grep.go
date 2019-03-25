@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
-	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/golang/glog"
 )
@@ -19,6 +23,8 @@ type Index struct {
 	Search     string
 	SearchType string
 	Context    int
+
+	MaxAge time.Duration
 }
 
 type CommandGenerator interface {
@@ -26,21 +32,24 @@ type CommandGenerator interface {
 	PathPrefix() string
 }
 
+type PathAccessor interface {
+	SearchPaths(*Index, []string) []string
+	Stats() PathIndexStats
+}
+
 type ripgrepGenerator struct {
-	execPath   string
-	searchPath string
+	execPath     string
+	searchPath   string
+	dynamicPaths PathAccessor
 }
 
 func (g ripgrepGenerator) Command(index *Index) (string, []string) {
-	args := []string{"--color", "never", "-S", "--sortr", "modified", "--null", "--no-line-number", "--no-heading"}
+	args := []string{g.execPath, "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context > 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	}
-	switch index.SearchType {
-	case "junit":
-		args = append(args, "-g", "junit.failures")
-	}
-	args = append(args, index.Search, g.searchPath)
+	args = append(args, index.Search)
+	args = g.dynamicPaths.SearchPaths(index, args)
 	return g.execPath, args
 }
 
@@ -49,12 +58,13 @@ func (g ripgrepGenerator) PathPrefix() string {
 }
 
 type grepGenerator struct {
-	execPath   string
-	searchPath string
+	execPath     string
+	searchPath   string
+	dynamicPaths PathAccessor
 }
 
 func (g grepGenerator) Command(index *Index) (string, []string) {
-	args := []string{"--color", "never", "-R", "--null"}
+	args := []string{g.execPath, "--color", "never", "-R", "--null"}
 	if index.Context > 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	}
@@ -62,7 +72,8 @@ func (g grepGenerator) Command(index *Index) (string, []string) {
 	case "junit":
 		args = append(args, "--include", "junit.failures")
 	}
-	args = append(args, index.Search, g.searchPath)
+	args = append(args, index.Search)
+	args = g.dynamicPaths.SearchPaths(index, args)
 	return g.execPath, args
 }
 
@@ -70,14 +81,14 @@ func (g grepGenerator) PathPrefix() string {
 	return g.searchPath
 }
 
-func NewCommandGenerator(searchPath string) (CommandGenerator, error) {
+func NewCommandGenerator(searchPath string, paths PathAccessor) (CommandGenerator, error) {
 	if path, err := exec.LookPath("rg"); err == nil {
 		glog.Infof("Using ripgrep at %s for searches", path)
-		return ripgrepGenerator{execPath: path, searchPath: searchPath}, nil
+		return ripgrepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
 	}
 	if path, err := exec.LookPath("grep"); err == nil {
 		glog.Infof("Using grep at %s for searches", path)
-		return grepGenerator{execPath: path, searchPath: searchPath}, nil
+		return grepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
 	}
 	return nil, fmt.Errorf("could not find 'rg' or 'grep' on the path")
 }
@@ -85,7 +96,9 @@ func NewCommandGenerator(searchPath string) (CommandGenerator, error) {
 func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, lines []bytes.Buffer, moreLines int)) error {
 	commandPath, commandArgs := gen.Command(index)
 	pathPrefix := gen.PathPrefix()
-	cmd := exec.Command(commandPath, commandArgs...)
+	cmd := &exec.Cmd{}
+	cmd.Path = commandPath
+	cmd.Args = commandArgs
 	errOut := &bytes.Buffer{}
 	cmd.Stderr = errOut
 	pr, err := cmd.StdoutPipe()
@@ -93,7 +106,6 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 		return err
 	}
 
-	glog.V(2).Infof("Running: %s", strings.Join(cmd.Args, " "))
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -224,4 +236,101 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 			}
 		}
 	}
+}
+
+type pathIndex struct {
+	base   string
+	maxAge time.Duration
+
+	lock          sync.Mutex
+	junitFailures []pathAge
+	stats         PathIndexStats
+}
+
+type PathIndexStats struct {
+	Entries int
+	Size    int64
+}
+
+type pathAge struct {
+	path string
+	age  time.Time
+}
+
+func (i *pathIndex) Load() error {
+	junitOrdered := make([]pathAge, 0, 1024)
+
+	var err error
+	start := time.Now()
+	defer func() {
+		glog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(junitOrdered), err)
+	}()
+
+	mustExpire := i.maxAge != 0
+	expiredAt := start.Add(-i.maxAge)
+
+	stats := PathIndexStats{}
+
+	err = filepath.Walk(i.base, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if mustExpire && expiredAt.After(info.ModTime()) {
+			os.RemoveAll(path)
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		switch info.Name() {
+		case "junit.failures":
+			stats.Entries++
+			stats.Size += info.Size()
+			junitOrdered = append(junitOrdered, pathAge{path: path, age: info.ModTime()})
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	sort.Slice(junitOrdered, func(i, j int) bool { return junitOrdered[i].age.After(junitOrdered[j].age) })
+
+	i.lock.Lock()
+	defer i.lock.Unlock()
+	i.junitFailures = junitOrdered
+	i.stats = stats
+
+	return nil
+}
+
+func (i *pathIndex) Stats() PathIndexStats {
+	i.lock.Lock()
+	defer i.lock.Unlock()
+	return i.stats
+}
+
+func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
+	var paths []pathAge
+	i.lock.Lock()
+	switch index.SearchType {
+	default:
+		paths = i.junitFailures
+	}
+	i.lock.Unlock()
+
+	// grow the map to the desired size up front
+	if len(paths) > len(initial) {
+		copied := make([]string, len(initial), len(initial)+len(paths))
+		copy(copied, initial)
+		initial = copied
+	}
+
+	for _, path := range paths {
+		initial = append(initial, path.path)
+	}
+	return initial
 }
