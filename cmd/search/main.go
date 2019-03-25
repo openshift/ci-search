@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"html/template"
@@ -205,13 +203,14 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	if context := req.FormValue("context"); len(context) > 0 {
 		num, err := strconv.Atoi(context)
-		if err != nil || num < 0 || num > 15 {
-			http.Error(w, "?context must be a number between 0 and 15", http.StatusInternalServerError)
+		if err != nil || num < -1 || num > 15 {
+			http.Error(w, "?context must be a number between -1 and 15", http.StatusInternalServerError)
 			return
 		}
 		index.Context = num
 	}
 	contextOptions := []string{
+		fmt.Sprintf(`<option value="-1" %s>Links</option>`, intSelected(1, index.Context)),
 		fmt.Sprintf(`<option value="0" %s>No context</option>`, intSelected(0, index.Context)),
 		fmt.Sprintf(`<option value="1" %s>1 lines</option>`, intSelected(1, index.Context)),
 		fmt.Sprintf(`<option value="2" %s>2 lines</option>`, intSelected(2, index.Context)),
@@ -222,7 +221,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		fmt.Sprintf(`<option value="15" %s>15 lines</option>`, intSelected(15, index.Context)),
 	}
 	switch index.Context {
-	case 0, 1, 2, 3, 5, 7, 10, 15:
+	case -1, 0, 1, 2, 3, 5, 7, 10, 15:
 	default:
 		context := template.HTMLEscapeString(strconv.Itoa(index.Context))
 		contextOptions = append(contextOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, context, context))
@@ -287,72 +286,18 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	// perform a search
 	flusher.Flush()
+	fmt.Fprintf(w, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
 
-	count := 0
 	start := time.Now()
-	var lastName string
-	fmt.Fprintf(w, `<div class="pl-3">`)
 
-	bw := bufio.NewWriterSize(w, 256*1024)
-	err := executeGrep(req.Context(), o.generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
-		if count == 5 || count%50 == 0 {
-			bw.Flush()
-		}
-		if lastName == name {
-			fmt.Fprintf(bw, "\n&mdash;\n\n")
-		} else {
-			lastName = name
-			if count > 0 {
-				fmt.Fprintf(bw, `</pre></div>`)
-			}
-			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
-			last := len(parts) - 1
-			switch {
-			case last > 2 && bytes.Equal(parts[last], []byte("junit.failures")):
-				prefix := string(bytes.Join(parts[:last], []byte("/")))
-				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">junit from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
-				} else {
-					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">junit from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
-				}
-			default:
-				fmt.Fprintf(bw, `<div class="mb-4"><h5 class="mb-3">%s</h5><pre class="small">`, template.HTMLEscapeString(name))
-			}
-		}
-
-		// remove empty leading and trailing lines
-		var lines [][]byte
-		for _, m := range matches {
-			line := bytes.TrimRight(m.Bytes(), " ")
-			if len(line) == 0 {
-				continue
-			}
-			lines = append(lines, line)
-		}
-		for i := len(lines) - 1; i >= 0; i-- {
-			if len(lines[i]) != 0 {
-				break
-			}
-			lines = lines[:i]
-		}
-
-		for _, line := range lines {
-			template.HTMLEscape(bw, line)
-			fmt.Fprintln(bw)
-		}
-		if moreLines > 0 {
-			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
-		}
-		count++
-	})
-	if count > 0 {
-		fmt.Fprintf(bw, `</pre></div>`)
+	var count int
+	var err error
+	if index.Context >= 0 {
+		count, err = renderWithContext(req.Context(), w, index, o.generator, start)
+	} else {
+		count, err = renderSummary(req.Context(), w, index, o.generator, start)
 	}
-	if err := bw.Flush(); err != nil {
-		glog.Errorf("Unable to flush results buffer: %v", err)
-	}
+
 	duration := time.Now().Sub(start)
 	glog.V(2).Infof("Search completed in %s", duration)
 	if err != nil && err != io.EOF {
@@ -362,7 +307,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	stats := o.accessor.Stats()
-	fmt.Fprintf(w, `<p class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
+	fmt.Fprintf(w, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
 	fmt.Fprintf(w, "</div>")
 
 	fmt.Fprintf(w, htmlPageEnd)
@@ -415,7 +360,7 @@ const htmlIndexForm = `
 
 const htmlEmptyPage = `
 <div class="ml-3" style="margin-top: 3rem; color: #666;">
-<p>Find test failures from <a href="/config">a subset of CI jobs</a> in <a href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
+<p>Find JUnit test failures from <a href="/config">a subset of CI jobs</a> in <a href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
 <p>The search input will use <a href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a>.</p>
 <p>Searches are case-insensitive (using ripgrep "smart casing")</p>
 <p>Examples:
@@ -424,6 +369,7 @@ const htmlEmptyPage = `
 <li><code>status code \d{3}\s</code> - all failures that contain 'status code' followed by a 3 digit number</li>
 </ul>
 <p>You can alter the age of results to search with the dropdown next to the search bar. Note that older results are pruned and may not be available after 14 days.</p>
+<p>The amount of surrounding text returned with each match can be changed, including none.
 <p>Currently indexing %s across %d entries</p>
 </div>
 `

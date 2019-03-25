@@ -45,8 +45,10 @@ type ripgrepGenerator struct {
 
 func (g ripgrepGenerator) Command(index *Index) (string, []string) {
 	args := []string{g.execPath, "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
-	if index.Context > 0 {
+	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
+	} else {
+		args = append(args, "--context", "0")
 	}
 	args = append(args, index.Search)
 	args = g.dynamicPaths.SearchPaths(index, args)
@@ -65,8 +67,10 @@ type grepGenerator struct {
 
 func (g grepGenerator) Command(index *Index) (string, []string) {
 	args := []string{g.execPath, "--color", "never", "-R", "--null"}
-	if index.Context > 0 {
+	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
+	} else {
+		args = append(args, "--context", "0")
 	}
 	switch index.SearchType {
 	case "junit":
