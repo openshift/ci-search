@@ -63,6 +63,7 @@ type options struct {
 
 	generator CommandGenerator
 	accessor  PathAccessor
+	metadata  ResultMetadata
 }
 
 func (o *options) Run() error {
@@ -73,6 +74,7 @@ func (o *options) Run() error {
 		return err
 	}
 	o.accessor = indexedPaths
+	o.metadata = indexedPaths
 
 	o.generator, err = NewCommandGenerator(o.Path, o.accessor)
 	if err != nil {
@@ -90,6 +92,16 @@ func (o *options) Run() error {
 				glog.Exitf("Server exited: %v", err)
 			}
 		}()
+	}
+
+	// index what is on disk now
+	for i := 0; i < 3; i++ {
+		err := indexedPaths.Load()
+		if err == nil {
+			break
+		}
+		glog.Errorf("Failed to update indexed paths, retrying: %v", err)
+		time.Sleep(time.Second)
 	}
 
 	if o.Interval > 0 {
