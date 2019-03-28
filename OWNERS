@@ -1,6 +1,6 @@
 approvers:
-- smarterclayton
-- wking
-reviewers
-- smarterclayton
-- wking
+  - smarterclayton
+  - wking
+reviewers:
+  - smarterclayton
+  - wking
