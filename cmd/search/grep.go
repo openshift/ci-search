@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,8 +28,16 @@ type Index struct {
 	MaxAge time.Duration
 }
 
+type Result struct {
+	FailedAt time.Time
+}
+
+type ResultMetadata interface {
+	MetadataFor(path string) (Result, bool)
+}
+
 type CommandGenerator interface {
-	Command(*Index) (string, []string)
+	Command(*Index) (cmd string, args []string)
 	PathPrefix() string
 }
 
@@ -146,8 +155,7 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 		if n > 0 || (err != nil && err != io.EOF) {
 			glog.Errorf("Unread input %d: %v", n, err)
 		}
-		glog.Infof("Read %d lines", linesRead)
-		glog.V(2).Infof("Waiting for command to finish")
+		glog.V(2).Infof("Waiting for command to finish after reading %d lines", linesRead)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && matches == 0 {
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
@@ -157,7 +165,6 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 			glog.Errorln(errOut.String())
 			glog.Errorf("Failed to wait for command: %v", err)
 		}
-		glog.V(2).Infof("Completed")
 	}()
 
 	chunk, isPrefix, err := br.ReadLine()
@@ -242,9 +249,10 @@ type pathIndex struct {
 	base   string
 	maxAge time.Duration
 
-	lock    sync.Mutex
-	ordered []pathAge
-	stats   PathIndexStats
+	lock      sync.Mutex
+	ordered   []pathAge
+	stats     PathIndexStats
+	pathIndex map[string]int
 }
 
 type PathIndexStats struct {
@@ -258,7 +266,22 @@ type pathAge struct {
 	age   time.Time
 }
 
-func (i *pathIndex) Load() error {
+func (index *pathIndex) MetadataFor(path string) (Result, bool) {
+	var age time.Time
+	var ok bool
+	index.lock.Lock()
+	position, ok := index.pathIndex[path]
+	if ok {
+		age = index.ordered[position].age
+	}
+	index.lock.Unlock()
+	if !ok {
+		return Result{}, false
+	}
+	return Result{FailedAt: age}, true
+}
+
+func (index *pathIndex) Load() error {
 	ordered := make([]pathAge, 0, 1024)
 
 	var err error
@@ -267,12 +290,12 @@ func (i *pathIndex) Load() error {
 		glog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(ordered), err)
 	}()
 
-	mustExpire := i.maxAge != 0
-	expiredAt := start.Add(-i.maxAge)
+	mustExpire := index.maxAge != 0
+	expiredAt := start.Add(-index.maxAge)
 
 	stats := PathIndexStats{}
 
-	err = filepath.Walk(i.base, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(index.base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -303,11 +326,17 @@ func (i *pathIndex) Load() error {
 	}
 
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].age.After(ordered[j].age) })
+	pathIndex := make(map[string]int, len(ordered))
+	for i, item := range ordered {
+		path := strings.TrimPrefix(item.path, index.base)
+		pathIndex[path] = i
+	}
 
-	i.lock.Lock()
-	defer i.lock.Unlock()
-	i.ordered = ordered
-	i.stats = stats
+	index.lock.Lock()
+	defer index.lock.Unlock()
+	index.ordered = ordered
+	index.pathIndex = pathIndex
+	index.stats = stats
 
 	return nil
 }

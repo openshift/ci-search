@@ -147,9 +147,9 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	var count int
 	var err error
 	if index.Context >= 0 {
-		count, err = renderWithContext(req.Context(), w, index, o.generator, start)
+		count, err = renderWithContext(req.Context(), w, index, o.generator, start, o.metadata)
 	} else {
-		count, err = renderSummary(req.Context(), w, index, o.generator, start)
+		count, err = renderSummary(req.Context(), w, index, o.generator, start, o.metadata)
 	}
 
 	duration := time.Now().Sub(start)
@@ -181,7 +181,7 @@ func durationSelected(current, expected time.Duration) string {
 	return ""
 }
 
-func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time) (int, error) {
+func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	lineCount := 0
 	var lastName string
@@ -200,6 +200,13 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 			}
 			count++
 
+			var age string
+			result, ok := resultMeta.MetadataFor(name)
+			if ok {
+				duration := start.Sub(result.FailedAt)
+				age = " " + units.HumanDuration(duration)
+			}
+
 			fmt.Fprintf(bw, `<div class="mb-4">`)
 			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
 			last := len(parts) - 1
@@ -214,13 +221,13 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 				prefix := string(bytes.Join(parts[:last], []byte("/")))
 				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
 					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+					fmt.Fprintf(bw, `<h5 class="mb-3">%s from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 				} else {
 					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+					fmt.Fprintf(bw, `<h5 class="mb-3">%s from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 				}
 			default:
-				fmt.Fprintf(bw, `<h5 class="mb-3">%s</h5><pre class="small">`, template.HTMLEscapeString(name))
+				fmt.Fprintf(bw, `<h5 class="mb-3">%s%s</h5><pre class="small">`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 			}
 		}
 
@@ -258,11 +265,12 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 	return count, err
 }
 
-func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time) (int, error) {
+func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	currentLines := 0
 	var lastName string
 	bw := bufio.NewWriterSize(w, 256*1024)
+	fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
 	err := executeGrep(ctx, generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
@@ -273,13 +281,20 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 			lastName = name
 
 			if count > 0 {
-				fmt.Fprintf(bw, " - <span>%d</span>", currentLines)
-				fmt.Fprintf(bw, `</div>`)
+				fmt.Fprintf(bw, "<td>%d</td>", currentLines)
+				fmt.Fprintf(bw, `</tr>`)
 				currentLines = 0
 			}
 			count++
 
-			fmt.Fprintf(bw, `<div class="mb-2">`)
+			var age string
+			result, ok := resultMeta.MetadataFor(name)
+			if ok {
+				duration := start.Sub(result.FailedAt)
+				age = units.HumanDuration(duration) + " ago"
+			}
+
+			fmt.Fprintf(bw, `<tr>`)
 			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
 			last := len(parts) - 1
 			switch {
@@ -293,13 +308,13 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 				prefix := string(bytes.Join(parts[:last], []byte("/")))
 				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
 					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<span class="mb-3">%s from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></span>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 				} else {
 					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<span class="mb-3">%s from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></span>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name))
+					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 				}
 			default:
-				fmt.Fprintf(bw, `<span class="mb-3">%s</span>`, template.HTMLEscapeString(name))
+				fmt.Fprintf(bw, `<td colspan="2">%s</td><td>%s</td>`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
 			}
 		}
 
@@ -307,8 +322,8 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 	})
 
 	if count > 0 {
-		fmt.Fprintf(bw, " - <span>%d</span>", currentLines)
-		fmt.Fprintf(bw, `</div>`)
+		fmt.Fprintf(bw, "<td>%d</td>", currentLines)
+		fmt.Fprintf(bw, `</tr>`)
 	}
 	if err := bw.Flush(); err != nil {
 		glog.Errorf("Unable to flush results buffer: %v", err)
