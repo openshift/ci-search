@@ -72,10 +72,6 @@ func (g grepGenerator) Command(index *Index) (string, []string) {
 	} else {
 		args = append(args, "--context", "0")
 	}
-	switch index.SearchType {
-	case "junit":
-		args = append(args, "--include", "junit.failures")
-	}
 	args = append(args, index.Search)
 	args = g.dynamicPaths.SearchPaths(index, args)
 	return g.execPath, args
@@ -246,9 +242,9 @@ type pathIndex struct {
 	base   string
 	maxAge time.Duration
 
-	lock          sync.Mutex
-	junitFailures []pathAge
-	stats         PathIndexStats
+	lock    sync.Mutex
+	ordered []pathAge
+	stats   PathIndexStats
 }
 
 type PathIndexStats struct {
@@ -257,17 +253,18 @@ type PathIndexStats struct {
 }
 
 type pathAge struct {
-	path string
-	age  time.Time
+	path  string
+	index string
+	age   time.Time
 }
 
 func (i *pathIndex) Load() error {
-	junitOrdered := make([]pathAge, 0, 1024)
+	ordered := make([]pathAge, 0, 1024)
 
 	var err error
 	start := time.Now()
 	defer func() {
-		glog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(junitOrdered), err)
+		glog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(ordered), err)
 	}()
 
 	mustExpire := i.maxAge != 0
@@ -290,10 +287,14 @@ func (i *pathIndex) Load() error {
 			return nil
 		}
 		switch info.Name() {
+		case "build-log.txt":
+			stats.Entries++
+			stats.Size += info.Size()
+			ordered = append(ordered, pathAge{index: "build-log", path: path, age: info.ModTime()})
 		case "junit.failures":
 			stats.Entries++
 			stats.Size += info.Size()
-			junitOrdered = append(junitOrdered, pathAge{path: path, age: info.ModTime()})
+			ordered = append(ordered, pathAge{index: "junit", path: path, age: info.ModTime()})
 		}
 		return nil
 	})
@@ -301,11 +302,11 @@ func (i *pathIndex) Load() error {
 		return err
 	}
 
-	sort.Slice(junitOrdered, func(i, j int) bool { return junitOrdered[i].age.After(junitOrdered[j].age) })
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].age.After(ordered[j].age) })
 
 	i.lock.Lock()
 	defer i.lock.Unlock()
-	i.junitFailures = junitOrdered
+	i.ordered = ordered
 	i.stats = stats
 
 	return nil
@@ -320,11 +321,13 @@ func (i *pathIndex) Stats() PathIndexStats {
 func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 	var paths []pathAge
 	i.lock.Lock()
-	switch index.SearchType {
-	default:
-		paths = i.junitFailures
-	}
+	paths = i.ordered
 	i.lock.Unlock()
+
+	// search all if we haven't built an index yet
+	if len(paths) == 0 {
+		return []string{i.base}
+	}
 
 	// grow the map to the desired size up front
 	if len(paths) > len(initial) {
@@ -333,17 +336,23 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 		initial = copied
 	}
 
+	all := len(index.SearchType) == 0 || index.SearchType == "all"
+
 	if index.MaxAge > 0 {
 		oldest := time.Now().Add(-index.MaxAge)
 		for _, path := range paths {
 			if path.age.Before(oldest) {
 				break
 			}
-			initial = append(initial, path.path)
+			if all || path.index == index.SearchType {
+				initial = append(initial, path.path)
+			}
 		}
 	} else {
 		for _, path := range paths {
-			initial = append(initial, path.path)
+			if all || path.index == index.SearchType {
+				initial = append(initial, path.path)
+			}
 		}
 	}
 	return initial

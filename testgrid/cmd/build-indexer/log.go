@@ -79,24 +79,59 @@ type LogAccumulator struct {
 	build      *gcs.Build
 	path       string
 	number     string
+	succeeded  bool
 
 	started    int64
 	finished   int64
 	lastUpdate int64
 
 	exists map[string]struct{}
+
+	lock     sync.Mutex
+	failures int
+	tails    map[string]*fileTail
+}
+
+type fileTail struct {
+	buf  [][]byte
+	base string
+}
+
+func (t *fileTail) Write(path string) error {
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(path, t.base))
+	if err != nil {
+		return err
+	}
+	for _, buf := range t.buf {
+		if _, err := f.Write(buf); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return err
+	}
+	return nil
 }
 
 func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites, meta map[string]string) {
 	if _, ok := a.exists["junit.failures"]; ok {
 		return
 	}
+	failures := 0
 	var f *os.File
 	for _, suite := range suites.Suites {
 		for _, test := range suite.Results {
 			if test.Failure == nil && test.Error == nil {
 				continue
 			}
+			failures++
 			if f == nil {
 				if err := os.MkdirAll(a.path, 0755); err != nil {
 					log.Printf("unable to create test dir: %v", err)
@@ -126,6 +161,10 @@ func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites, met
 			fmt.Fprintf(f, out)
 		}
 	}
+
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	a.failures += failures
 }
 
 func (a *LogAccumulator) AddMetadata(ctx context.Context, started *gcs.Started, finished *gcs.Finished) (ok bool, err error) {
@@ -134,6 +173,7 @@ func (a *LogAccumulator) AddMetadata(ctx context.Context, started *gcs.Started, 
 	}
 	a.started = started.Timestamp
 	a.finished = *finished.Timestamp
+	a.succeeded = finished.Result == "SUCCESS"
 	if a.finished > a.started {
 		a.lastUpdate = a.finished
 	} else {
@@ -143,19 +183,36 @@ func (a *LogAccumulator) AddMetadata(ctx context.Context, started *gcs.Started, 
 }
 
 func (a *LogAccumulator) Finished(ctx context.Context) {
-	if a.finished > 0 {
-		for _, file := range []string{"junit.failures"} {
-			_, ok := a.exists[file]
-			if ok {
-				continue
+	if a.finished == 0 {
+		// job isn't done, do nothing
+		return
+	}
+
+	at := time.Unix(a.finished, 0)
+
+	// if we get no junit results, write the tail of any important logs to disk
+	if !a.succeeded && a.failures == 0 {
+		for base, t := range a.tails {
+			if err := t.Write(a.path); err != nil {
+				glog.Errorf("Unable to write captured tail %s: %v", base, err)
 			}
-			at := time.Unix(a.finished, 0)
-			if err := os.Chtimes(filepath.Join(a.path, file), at, at); err != nil && !os.IsNotExist(err) {
-				glog.Errorf("Unable to set modification time of %s to %d: %v", file, a.finished, err)
+			if err := os.Chtimes(filepath.Join(a.path, base), at, at); err != nil && !os.IsNotExist(err) {
+				glog.Errorf("Unable to set modification time of %s to %d: %v", base, a.finished, err)
 			}
-			if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
-				glog.Errorf("Unable to set modification time of %s to %d: %v", file, a.finished, err)
-			}
+		}
+	}
+
+	// update the timestamps of things we always write
+	if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
+		glog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
+	}
+	for _, file := range []string{"junit.failures"} {
+		_, ok := a.exists[file]
+		if ok {
+			continue
+		}
+		if err := os.Chtimes(filepath.Join(a.path, file), at, at); err != nil && !os.IsNotExist(err) {
+			glog.Errorf("Unable to set modification time of %s to %d: %v", file, a.finished, err)
 		}
 	}
 }
@@ -166,6 +223,15 @@ func (a *LogAccumulator) Started() int64 {
 
 func (a *LogAccumulator) LastUpdate() int64 {
 	return a.lastUpdate
+}
+
+func (a *LogAccumulator) IsFailureOrUnknown() bool {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	if a.finished > 0 {
+		return !a.succeeded
+	}
+	return true
 }
 
 func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact, base string) error {
@@ -200,13 +266,83 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact, base s
 	return nil
 }
 
+func (a *LogAccumulator) downloadTailWhenFailure(ctx context.Context, artifact, base string, length int64) error {
+	if _, ok := a.exists[base]; ok {
+		return nil
+	}
+
+	// if we know we succeeded, we can skip downloading
+	if !a.IsFailureOrUnknown() {
+		return nil
+	}
+
+	h := a.build.Bucket.Object(artifact)
+	r, err := h.NewReader(ctx)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	bufs := [][]byte{make([]byte, length), make([]byte, length)}
+	mod := len(bufs)
+	counts := make([]int, mod)
+	lastMod := 0
+	for i := 0; ; i++ {
+		index := i % mod
+		n, err := r.Read(bufs[index])
+		counts[index] = n
+		if err != nil {
+			if err != io.EOF {
+				return err
+			}
+			lastMod = index
+			break
+		}
+	}
+	t := &fileTail{
+		base: base,
+		buf:  make([][]byte, 0, mod),
+	}
+	n := 0
+	for j := 0; j < mod; j++ {
+		index := j + lastMod + 1
+		t.buf = append(t.buf, bufs[index%mod][:counts[index%mod]])
+		n += counts[index%mod]
+	}
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	if a.tails == nil {
+		a.tails = make(map[string]*fileTail)
+	}
+	a.tails[base] = t
+	return nil
+}
+
 func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan string, unprocessedArtifacts chan<- string) error {
 	var wg sync.WaitGroup
 	ec := make(chan error)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for art := range artifacts {
+		var rel string
+		if strings.HasPrefix(art, a.build.Prefix) {
+			rel = art[len(a.build.Prefix):]
+		}
 		switch {
+		case rel == "build-log.txt":
+
+			wg.Add(1)
+			go func(art string) {
+				defer wg.Done()
+				if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
+					log.Printf("error: Unable to download %s: %v", art, err)
+					select {
+					case <-ctx.Done():
+					case ec <- err:
+					}
+				}
+			}(art)
+
 		case strings.HasSuffix(art, "e2e.log"):
 			break
 
