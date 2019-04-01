@@ -153,13 +153,14 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	duration := time.Now().Sub(start)
-	glog.V(2).Infof("Search completed in %s", duration)
 	if err != nil && err != io.EOF {
-		glog.Errorf("Command exited with error: %v", err)
+		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search, count, duration, err)
 		fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
 		fmt.Fprintf(w, htmlPageEnd)
 		return
 	}
+	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search, count, duration)
+
 	stats := o.accessor.Stats()
 	fmt.Fprintf(w, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
 	fmt.Fprintf(w, "</div>")
