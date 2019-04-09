@@ -38,29 +38,12 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		flusher = nopFlusher{}
 	}
 
-	if err := req.ParseForm(); err != nil {
-		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusInternalServerError)
+	index, err := o.parseRequest(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	index := &Index{
-		Context: 2,
-		MaxAge:  7 * 24 * time.Hour,
-	}
-
-	search := req.FormValue("search")
-	if len(search) > 0 {
-		index.Search = search
-	}
-
-	if context := req.FormValue("context"); len(context) > 0 {
-		num, err := strconv.Atoi(context)
-		if err != nil || num < -1 || num > 15 {
-			http.Error(w, "?context must be a number between -1 and 15", http.StatusInternalServerError)
-			return
-		}
-		index.Context = num
-	}
 	contextOptions := []string{
 		fmt.Sprintf(`<option value="-1" %s>Links</option>`, intSelected(1, index.Context)),
 		fmt.Sprintf(`<option value="0" %s>No context</option>`, intSelected(0, index.Context)),
@@ -79,17 +62,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		contextOptions = append(contextOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, context, context))
 	}
 
-	switch req.FormValue("type") {
-	case "junit":
-		index.SearchType = "junit"
-	case "build-log":
-		index.SearchType = "build-log"
-	case "all", "":
-		index.SearchType = "all"
-	default:
-		http.Error(w, "?search must be 'junit', 'build-log', or 'all'", http.StatusInternalServerError)
-		return
-	}
 	var searchTypeOptions []string
 	for _, searchType := range []string{"junit", "build-log", "all"} {
 		var selected string
@@ -99,17 +71,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		searchTypeOptions = append(searchTypeOptions, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(searchType), selected, template.HTMLEscapeString(searchType)))
 	}
 
-	if value := req.FormValue("maxAge"); len(value) > 0 {
-		maxAge, err := time.ParseDuration(value)
-		if err != nil || maxAge < 0 {
-			http.Error(w, "?maxAge must be a non-negative duration", http.StatusInternalServerError)
-			return
-		}
-		index.MaxAge = maxAge
-	}
-	if o.MaxAge > 0 && o.MaxAge < index.MaxAge {
-		index.MaxAge = o.MaxAge
-	}
 	maxAgeOptions := []string{
 		fmt.Sprintf(`<option value="6h" %s>6h</option>`, durationSelected(6*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="12h" %s>12h</option>`, durationSelected(12*time.Hour, index.MaxAge)),
@@ -131,7 +92,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
-	if len(search) == 0 {
+	if len(index.Search) == 0 {
 		stats := o.accessor.Stats()
 		fmt.Fprintf(w, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
 		fmt.Fprintf(w, htmlPageEnd)
@@ -145,7 +106,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 
 	var count int
-	var err error
 	if index.Context >= 0 {
 		count, err = renderWithContext(req.Context(), w, index, o.generator, start, o.metadata)
 	} else {
@@ -166,6 +126,56 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "</div>")
 
 	fmt.Fprintf(w, htmlPageEnd)
+}
+
+func (o *options) parseRequest(req *http.Request) (*Index, error) {
+	if err := req.ParseForm(); err != nil {
+		return nil, err
+	}
+
+	index := &Index{
+		Context: 2,
+		MaxAge:  7 * 24 * time.Hour,
+	}
+
+	search := req.FormValue("search")
+	if len(search) > 0 {
+		index.Search = search
+	}
+
+	if context := req.FormValue("context"); len(context) > 0 {
+		num, err := strconv.Atoi(context)
+		if err != nil || num < -1 || num > 15 {
+			return nil, fmt.Errorf("context must be a number between -1 and 15")
+		}
+		index.Context = num
+	}
+
+	switch req.FormValue("type") {
+	case "junit":
+		index.SearchType = "junit"
+	case "build-log":
+		index.SearchType = "build-log"
+	case "all", "":
+		index.SearchType = "all"
+	default:
+		return nil, fmt.Errorf("search must be 'junit', 'build-log', or 'all'")
+	}
+
+	if value := req.FormValue("maxAge"); len(value) > 0 {
+		maxAge, err := time.ParseDuration(value)
+		if err != nil {
+			return nil, fmt.Errorf("maxAge is an invalid duration: %v", err)
+		} else if maxAge < 0 {
+			return nil, fmt.Errorf("maxAge must be non-negative: %v", err)
+		}
+		index.MaxAge = maxAge
+	}
+	if o.MaxAge > 0 && o.MaxAge < index.MaxAge {
+		index.MaxAge = o.MaxAge
+	}
+
+	return index, nil
 }
 
 func intSelected(current, expected int) string {
