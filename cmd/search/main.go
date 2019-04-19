@@ -100,6 +100,7 @@ func (o *options) Run() error {
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
 		mux.HandleFunc("/config", o.handleConfig)
+		mux.HandleFunc("/search", o.handleSearch)
 		mux.HandleFunc("/", o.handleIndex)
 
 		go func() {
