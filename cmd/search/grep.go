@@ -17,7 +17,7 @@ import (
 )
 
 type Index struct {
-	Search     string
+	Search     []string
 	SearchType string
 	Context    int
 
@@ -25,7 +25,7 @@ type Index struct {
 }
 
 type CommandGenerator interface {
-	Command(*Index) (cmd string, args []string)
+	Command(index *Index, search string) (cmd string, args []string)
 	PathPrefix() string
 }
 
@@ -35,14 +35,14 @@ type ripgrepGenerator struct {
 	dynamicPaths PathAccessor
 }
 
-func (g ripgrepGenerator) Command(index *Index) (string, []string) {
+func (g ripgrepGenerator) Command(index *Index, search string) (string, []string) {
 	args := []string{g.execPath, "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
 		args = append(args, "--context", "0")
 	}
-	args = append(args, index.Search)
+	args = append(args, search)
 	args = g.dynamicPaths.SearchPaths(index, args)
 	return g.execPath, args
 }
@@ -57,14 +57,14 @@ type grepGenerator struct {
 	dynamicPaths PathAccessor
 }
 
-func (g grepGenerator) Command(index *Index) (string, []string) {
+func (g grepGenerator) Command(index *Index, search string) (string, []string) {
 	args := []string{g.execPath, "--color=never", "-R", "--null"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
 		args = append(args, "--context", "0")
 	}
-	args = append(args, index.Search)
+	args = append(args, search)
 	args = g.dynamicPaths.SearchPaths(index, args)
 	return g.execPath, args
 }
@@ -90,11 +90,24 @@ func NewCommandGenerator(searchPath string, paths PathAccessor) (CommandGenerato
 //
 // * name, the name of the matching file, as a slash-slash-separated path
 //   resolved relative to the index base.
+// * search, the string from Index.Search which resulted in the callback.
 // * lines, the match with its surrounding context.
 // * moreLines, the number of elided lines, when the match and context
 //   is truncated due to excessive length.
-func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, lines []bytes.Buffer, moreLines int)) error {
-	commandPath, commandArgs := gen.Command(index)
+func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
+	// FIXME: parallelize this
+	for _, search := range index.Search {
+		err := executeGrepSingle(ctx, gen, index, search, maxLines, fn)
+		if err != nil && err != io.EOF {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
+	commandPath, commandArgs := gen.Command(index, search)
 	pathPrefix := gen.PathPrefix()
 	cmd := &exec.Cmd{}
 	cmd.Path = commandPath
@@ -137,7 +150,7 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 		hidden := (line) - len(result)
 		//glog.V(2).Infof("Captured %d lines for %s, %d not shown", line, path, hidden)
 		matches++
-		fn(filepath.ToSlash(relPath), result, hidden)
+		fn(filepath.ToSlash(relPath), search, result, hidden)
 		return nil
 	}
 

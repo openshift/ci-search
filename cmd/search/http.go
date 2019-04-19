@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -20,6 +19,12 @@ import (
 type nopFlusher struct{}
 
 func (_ nopFlusher) Flush() {}
+
+type Match struct {
+	FileType  string   `json:"filename"`
+	Context   []string `json:"context,omitempty"`
+	MoreLines int      `json:"moreLines,omitempty"`
+}
 
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 	data, err := ioutil.ReadFile(o.ConfigPath)
@@ -41,6 +46,10 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
+	}
+
+	if len(index.Search) == 0 {
+		index.Search = []string{""}
 	}
 
 	contextOptions := []string{
@@ -88,10 +97,10 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
+	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
-	if len(index.Search) == 0 {
+	if len(index.Search[0]) == 0 {
 		stats := o.accessor.Stats()
 		fmt.Fprintf(w, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
 		fmt.Fprintf(w, htmlPageEnd)
@@ -112,13 +121,13 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	duration := time.Now().Sub(start)
-	if err != nil && err != io.EOF {
-		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search, count, duration, err)
+	if err != nil {
+		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
 		fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
 		fmt.Fprintf(w, htmlPageEnd)
 		return
 	}
-	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search, count, duration)
+	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
 	stats := o.accessor.Stats()
 	fmt.Fprintf(w, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
@@ -137,10 +146,7 @@ func (o *options) parseRequest(req *http.Request) (*Index, error) {
 		MaxAge:  7 * 24 * time.Hour,
 	}
 
-	search := req.FormValue("search")
-	if len(search) > 0 {
-		index.Search = search
-	}
+	index.Search, _ = req.Form["search"]
 
 	if context := req.FormValue("context"); len(context) > 0 {
 		num, err := strconv.Atoi(context)
@@ -197,7 +203,7 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 	var lastName string
 
 	bw := bufio.NewWriterSize(w, 256*1024)
-	err := executeGrep(ctx, generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
@@ -261,7 +267,7 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 	var lastName string
 	bw := bufio.NewWriterSize(w, 256*1024)
 	fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
-	err := executeGrep(ctx, generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
