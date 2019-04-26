@@ -75,7 +75,7 @@ type grepGenerator struct {
 }
 
 func (g grepGenerator) Command(index *Index) (string, []string) {
-	args := []string{g.execPath, "--color", "never", "-R", "--null"}
+	args := []string{g.execPath, "--color=never", "-R", "--null"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
