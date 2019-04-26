@@ -69,7 +69,7 @@ func gatherOptions() options {
 	o := options{}
 	flag.StringVar(&o.config, "config", "", "Path to a local config file or a gs proto path (gs://path/to/config.pb)")
 	flag.StringVar(&o.path, "path", "", "Local directory to write data to")
-	flag.StringVar(&o.creds, "gcp-service-account", "", "/path/to/gcp/creds (use local creds if empty")
+	flag.StringVar(&o.creds, "gcp-service-account", "", "/path/to/gcp/creds (use local creds if empty)")
 	flag.StringVar(&o.group, "test-group", "", "Only update named group if set")
 	flag.IntVar(&o.groupConcurrency, "group-concurrency", 0, "Manually define the number of groups to concurrently update if non-zero")
 	flag.IntVar(&o.buildConcurrency, "build-concurrency", 0, "Manually define the number of builds to concurrently read if non-zero")
