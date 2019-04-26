@@ -366,7 +366,7 @@ const htmlPageEnd = `
 
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
-	<div class="input-group input-group-lg"><input autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
+	<div class="input-group input-group-lg"><input autocomplete="off" autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
 	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="context" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
