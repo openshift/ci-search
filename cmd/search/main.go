@@ -284,12 +284,27 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return nil
 	}
 
+	pathOnDisk := filepath.Join(append([]string{toDir}, strings.Split(logPath, "/")...)...)
+	parent := filepath.Dir(pathOnDisk)
+	if err := os.MkdirAll(parent, 0777); err != nil {
+		return fmt.Errorf("unable to create directory for prow job index: %v", err)
+	}
+	f, err := os.OpenFile(pathOnDisk, os.O_EXCL|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("unable to index prow jobs from Deck, could not create log file: %v", err)
+	}
+	defer f.Close()
+
 	logsURL := *deckURL
 	logsURL.Path = "/log"
 	query := url.Values{"id": []string{job.BuildID}, "job": []string{job.Job}}
 	logsURL.RawQuery = query.Encode()
 	resp, err := client.Get(logsURL.String())
 	if err != nil {
+		removeLoggingErrors(pathOnDisk)
 		return fmt.Errorf("unable to index prow jobs from Deck: %v", err)
 	}
 	defer func() {
@@ -301,26 +316,30 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		if resp.StatusCode == 404 {
 			return nil
 		}
+		if resp.StatusCode >= 500 {
+			removeLoggingErrors(pathOnDisk)
+		}
 		return fmt.Errorf("unable to query prow job logs %s: %d %s", logsURL.String(), resp.StatusCode, resp.Status)
 	}
-	pathOnDisk := filepath.Join(append([]string{toDir}, strings.Split(logPath, "/")...)...)
-	parent := filepath.Dir(pathOnDisk)
-	if err := os.MkdirAll(parent, 0777); err != nil {
-		return fmt.Errorf("unable to create directory for prow job index: %v", err)
-	}
-	f, err := os.OpenFile(pathOnDisk, os.O_EXCL|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("unable to index prow jobs from Deck, could not create log file: %v", err)
-	}
-	defer f.Close()
+
 	if _, err := io.Copy(f, resp.Body); err != nil {
+		removeLoggingErrors(pathOnDisk)
 		return fmt.Errorf("unable to index prow jobs from Deck, could not copy log file: %v", err)
 	}
 	if err := f.Close(); err != nil {
+		removeLoggingErrors(pathOnDisk)
 		return fmt.Errorf("unable to index prow jobs from Deck, could not close log file: %v", err)
 	}
 	if err := os.Chtimes(pathOnDisk, date, date); err != nil {
+		removeLoggingErrors(pathOnDisk)
 		return fmt.Errorf("unable to set file time while indexing to disk: %v", err)
 	}
 	return nil
+}
+
+func removeLoggingErrors(path string) {
+	err := os.Remove(path)
+	if err != nil {
+		glog.Error(err)
+	}
 }
