@@ -1,15 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -45,6 +51,7 @@ func main() {
 	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "The interval to index jobs. Set to 0 (the default) to disable indexing.")
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "Path to a GCP service account file.")
+	flag.StringVar(&opt.DeckURL, "deck-url", opt.DeckURL, "URL to the Deck server to index prow job failures into search.")
 
 	if err := cmd.Execute(); err != nil {
 		glog.Exitf("error: %v", err)
@@ -60,6 +67,7 @@ type options struct {
 	Interval          time.Duration
 	GCPServiceAccount string
 	ConfigPath        string
+	DeckURL           string
 
 	generator CommandGenerator
 	accessor  PathAccessor
@@ -135,31 +143,109 @@ func (o *options) Run() error {
 			}
 		}
 
+		var deckURL *url.URL
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSHandshakeTimeout: 10 * time.Second,
+				MaxConnsPerHost:     10,
+				Dial: (&net.Dialer{
+					Timeout: 30 * time.Second,
+				}).Dial,
+			},
+		}
+		if len(o.DeckURL) > 0 {
+			u, err := url.Parse(o.DeckURL)
+			if err != nil {
+				glog.Exitf("Unable to parse --deck-url: %v", err)
+			}
+			deckURL = u
+		}
+
 		glog.Infof("Starting build-indexer every %s", o.Interval)
 		wait.Forever(func() {
-			args := []string{"--config", o.ConfigPath, "--path", o.Path, "--max-results", "500"}
-			if len(o.GCPServiceAccount) > 0 {
-				args = append(args, "--gcp-service-account", o.GCPServiceAccount)
+			var wg sync.WaitGroup
+			if deckURL != nil {
+				workCh := make(chan *ProwJob, 5)
+				for i := 0; i < cap(workCh); i++ {
+					wg.Add(1)
+					go func() {
+						defer glog.V(4).Infof("Indexer completed")
+						defer wg.Done()
+						for job := range workCh {
+							if err := fetchJob(client, job, indexedPaths, o.Path, deckURL); err != nil {
+								glog.Warningf("Job index failed: %v", err)
+								continue
+							}
+						}
+					}()
+				}
+				go func() {
+					defer glog.V(4).Infof("Lister completed")
+					defer close(workCh)
+					dataURL := *deckURL
+					dataURL.Path = "/data.js"
+					resp, err := client.Get(dataURL.String())
+					if err != nil {
+						glog.Errorf("Unable to index prow jobs from Deck: %v", err)
+						return
+					}
+					defer resp.Body.Close()
+					if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+						glog.Errorf("Unable to query prow jobs: %d %s", resp.StatusCode, resp.Status)
+						return
+					}
+					d := json.NewDecoder(resp.Body)
+					var jobs []ProwJob
+					if err := d.Decode(&jobs); err != nil {
+						glog.Errorf("Unable to decode prow jobs from Deck: %v", err)
+						return
+					}
+					glog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs))
+					for i := range jobs {
+						job := &jobs[i]
+						if job.State != "failure" {
+							continue
+						}
+						// jobs without a URL are unfetchable
+						if len(job.URL) == 0 {
+							continue
+						}
+						workCh <- job
+					}
+				}()
 			}
-			if !indexedAt.IsZero() {
-				args = append(args, "--finished-after", strconv.FormatInt(indexedAt.Unix(), 10))
-			}
-			cmd := exec.Command("build-indexer", args...)
-			cmd.Stdout = os.Stderr
-			cmd.Stderr = os.Stderr
 
-			indexedAt = time.Now()
-			if err := cmd.Run(); err != nil {
-				glog.Errorf("Failed to index: %v", err)
-				return
-			}
-			indexDuration := time.Now().Sub(indexedAt)
+			wg.Add(1)
+			go func() {
+				defer glog.V(4).Infof("build-indexer completed")
+				defer wg.Done()
+				args := []string{"--config", o.ConfigPath, "--path", o.Path, "--max-results", "500"}
+				if len(o.GCPServiceAccount) > 0 {
+					args = append(args, "--gcp-service-account", o.GCPServiceAccount)
+				}
+				if !indexedAt.IsZero() {
+					args = append(args, "--finished-after", strconv.FormatInt(indexedAt.Unix(), 10))
+				}
+				cmd := exec.Command("build-indexer", args...)
+				cmd.Stdout = os.Stderr
+				cmd.Stderr = os.Stderr
 
-			// keep the index time stored on successful updates
-			glog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
-			if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
-				glog.Errorf("Failed to write index marker: %v", err)
-			}
+				indexedAt = time.Now()
+				if err := cmd.Run(); err != nil {
+					glog.Errorf("Failed to index: %v", err)
+					return
+				}
+				indexDuration := time.Now().Sub(indexedAt)
+
+				// keep the index time stored on successful updates
+				glog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
+				if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
+					glog.Errorf("Failed to write index marker: %v", err)
+				}
+			}()
+
+			wg.Wait()
 
 			for i := 0; i < 3; i++ {
 				err := indexedPaths.Load()
@@ -173,4 +259,68 @@ func (o *options) Run() error {
 	}
 
 	select {}
+}
+
+type ProwJob struct {
+	Type     string `json:"type"`
+	State    string `json:"state"`
+	URL      string `json:"url"`
+	Finished string `json:"finished"`
+	Job      string `json:"job"`
+	BuildID  string `json:"build_id"`
+}
+
+func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, deckURL *url.URL) error {
+	date, err := time.Parse(time.RFC3339, job.Finished)
+	if err != nil {
+		return fmt.Errorf("prow job %s #%s had invalid date: %s", job.Job, job.BuildID, err)
+	}
+	logPath := job.URL
+	if !strings.HasPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/") {
+		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
+	}
+	logPath = path.Join(strings.TrimPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/"), "build-log.txt")
+	if _, ok := indexedPaths.MetadataFor("/" + logPath); ok {
+		return nil
+	}
+
+	logsURL := *deckURL
+	logsURL.Path = "/log"
+	query := url.Values{"id": []string{job.BuildID}, "job": []string{job.Job}}
+	logsURL.RawQuery = query.Encode()
+	resp, err := client.Get(logsURL.String())
+	if err != nil {
+		return fmt.Errorf("unable to index prow jobs from Deck: %v", err)
+	}
+	defer func() {
+		// ensure we pull the body completely so connections are reused
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == 404 {
+			return nil
+		}
+		return fmt.Errorf("unable to query prow job logs %s: %d %s", logsURL.String(), resp.StatusCode, resp.Status)
+	}
+	pathOnDisk := filepath.Join(append([]string{toDir}, strings.Split(logPath, "/")...)...)
+	parent := filepath.Dir(pathOnDisk)
+	if err := os.MkdirAll(parent, 0777); err != nil {
+		return fmt.Errorf("unable to create directory for prow job index: %v", err)
+	}
+	f, err := os.OpenFile(pathOnDisk, os.O_EXCL|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("unable to index prow jobs from Deck, could not create log file: %v", err)
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("unable to index prow jobs from Deck, could not copy log file: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("unable to index prow jobs from Deck, could not close log file: %v", err)
+	}
+	if err := os.Chtimes(pathOnDisk, date, date); err != nil {
+		return fmt.Errorf("unable to set file time while indexing to disk: %v", err)
+	}
+	return nil
 }

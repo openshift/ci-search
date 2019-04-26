@@ -202,6 +202,7 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
+		name = strings.Trim(name, "/")
 		if lastName == name {
 			fmt.Fprintf(bw, "\n&mdash;\n\n")
 		} else {
@@ -286,6 +287,7 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
+		name = strings.Trim(name, "/")
 		if lastName == name {
 			// continue accumulating matches
 		} else {
