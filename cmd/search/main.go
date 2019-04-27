@@ -29,8 +29,9 @@ func main() {
 	original.Set("v", "2")
 
 	opt := &options{
-		ListenAddr: ":8080",
-		MaxAge:     14 * 24 * time.Hour,
+		ListenAddr:   ":8080",
+		MaxAge:       14 * 24 * time.Hour,
+		JobURIPrefix: "https://openshift-gce-devel.appspot.com/build/",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -49,7 +50,8 @@ func main() {
 	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "The interval to index jobs. Set to 0 (the default) to disable indexing.")
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "Path to a GCP service account file.")
-	flag.StringVar(&opt.DeckURL, "deck-url", opt.DeckURL, "URL to the Deck server to index prow job failures into search.")
+	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
+	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
 
 	if err := cmd.Execute(); err != nil {
 		glog.Exitf("error: %v", err)
@@ -64,8 +66,9 @@ type options struct {
 	MaxAge            time.Duration
 	Interval          time.Duration
 	GCPServiceAccount string
+	JobURIPrefix      string
 	ConfigPath        string
-	DeckURL           string
+	DeckURI           string
 
 	generator CommandGenerator
 	accessor  PathAccessor
@@ -73,9 +76,16 @@ type options struct {
 }
 
 func (o *options) Run() error {
-	var err error
+	jobURIPrefix, err := url.Parse(o.JobURIPrefix)
+	if err != nil {
+		glog.Exitf("Unable to parse --job-uri-prefix: %v", err)
+	}
 
-	indexedPaths := &pathIndex{base: o.Path, maxAge: o.MaxAge}
+	indexedPaths := &pathIndex{
+		base:    o.Path,
+		baseURI: jobURIPrefix,
+		maxAge:  o.MaxAge,
+	}
 	if err := indexedPaths.Load(); err != nil {
 		return err
 	}
@@ -141,7 +151,6 @@ func (o *options) Run() error {
 			}
 		}
 
-		var deckURL *url.URL
 		client := &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -152,18 +161,20 @@ func (o *options) Run() error {
 				}).Dial,
 			},
 		}
-		if len(o.DeckURL) > 0 {
-			u, err := url.Parse(o.DeckURL)
+
+		var deckURI *url.URL
+		if len(o.DeckURI) > 0 {
+			u, err := url.Parse(o.DeckURI)
 			if err != nil {
-				glog.Exitf("Unable to parse --deck-url: %v", err)
+				glog.Exitf("Unable to parse --deck-uri: %v", err)
 			}
-			deckURL = u
+			deckURI = u
 		}
 
 		glog.Infof("Starting build-indexer every %s", o.Interval)
 		wait.Forever(func() {
 			var wg sync.WaitGroup
-			if deckURL != nil {
+			if deckURI != nil {
 				workCh := make(chan *ProwJob, 5)
 				for i := 0; i < cap(workCh); i++ {
 					wg.Add(1)
@@ -171,7 +182,7 @@ func (o *options) Run() error {
 						defer glog.V(4).Infof("Indexer completed")
 						defer wg.Done()
 						for job := range workCh {
-							if err := fetchJob(client, job, indexedPaths, o.Path, deckURL); err != nil {
+							if err := fetchJob(client, job, indexedPaths, o.Path, deckURI, jobURIPrefix); err != nil {
 								glog.Warningf("Job index failed: %v", err)
 								continue
 							}
@@ -181,9 +192,9 @@ func (o *options) Run() error {
 				go func() {
 					defer glog.V(4).Infof("Lister completed")
 					defer close(workCh)
-					dataURL := *deckURL
-					dataURL.Path = "/data.js"
-					resp, err := client.Get(dataURL.String())
+					dataURI := *deckURI
+					dataURI.Path = "/data.js"
+					resp, err := client.Get(dataURI.String())
 					if err != nil {
 						glog.Errorf("Unable to index prow jobs from Deck: %v", err)
 						return

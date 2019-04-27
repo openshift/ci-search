@@ -211,34 +211,14 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 			count++
 
 			var age string
-			result, ok := resultMeta.MetadataFor(name)
-			if ok {
+			result, _ := resultMeta.MetadataFor(name)
+			if !result.FailedAt.IsZero() {
 				duration := start.Sub(result.FailedAt)
 				age = " " + units.HumanDuration(duration)
 			}
 
 			fmt.Fprintf(bw, `<div class="mb-4">`)
-			parts := bytes.SplitN([]byte(name), []byte("/"), 8)
-			last := len(parts) - 1
-			switch {
-			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
-				var filename string
-				if string(parts[last]) == "junit.failures" {
-					filename = "junit"
-				} else {
-					filename = string(parts[last])
-				}
-				prefix := string(bytes.Join(parts[:last], []byte("/")))
-				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				} else {
-					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				}
-			default:
-				fmt.Fprintf(bw, `<h5 class="mb-3">%s%s</h5><pre class="small">`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-			}
+			fmt.Fprintf(bw, `<h5 class="mb-3">%s from %s <a href="%s">%s #%d</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.Trigger), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 		}
 
 		// remove empty leading and trailing lines
@@ -290,6 +270,18 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 		} else {
 			lastName = name
 
+			var age string
+			result, _ := resultMeta.MetadataFor(name)
+			if !result.FailedAt.IsZero() {
+				duration := start.Sub(result.FailedAt)
+				age = units.HumanDuration(duration) + " ago"
+			}
+
+			if result.JobURI == nil {
+				glog.Errorf("no job URI for %q", name)
+				return
+			}
+
 			if count > 0 {
 				fmt.Fprintf(bw, "<td>%d</td>", currentLines)
 				fmt.Fprintf(bw, `</tr>`)
@@ -297,35 +289,8 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 			}
 			count++
 
-			var age string
-			result, ok := resultMeta.MetadataFor(name)
-			if ok {
-				duration := start.Sub(result.FailedAt)
-				age = units.HumanDuration(duration) + " ago"
-			}
-
 			fmt.Fprintf(bw, `<tr>`)
-			parts := bytes.SplitN([]byte(name), []byte("/"), 8)
-			last := len(parts) - 1
-			switch {
-			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
-				var filename string
-				if string(parts[last]) == "junit.failures" {
-					filename = "junit"
-				} else {
-					filename = string(parts[last])
-				}
-				prefix := string(bytes.Join(parts[:last], []byte("/")))
-				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				} else {
-					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				}
-			default:
-				fmt.Fprintf(bw, `<td colspan="2">%s</td><td>%s</td>`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-			}
+			fmt.Fprintf(bw, `<td>%s</td><td><a href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 		}
 
 		currentLines++

@@ -22,16 +22,16 @@ type ProwJob struct {
 	BuildID  string `json:"build_id"`
 }
 
-func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, deckURL *url.URL) error {
+func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, deckURL *url.URL, jobURIPrefix *url.URL) error {
 	date, err := time.Parse(time.RFC3339, job.Finished)
 	if err != nil {
 		return fmt.Errorf("prow job %s #%s had invalid date: %s", job.Job, job.BuildID, err)
 	}
 	logPath := job.URL
-	if !strings.HasPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/") {
+	if !strings.HasPrefix(logPath, jobURIPrefix.String()) {
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
 	}
-	logPath = path.Join(strings.TrimPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/"), "build-log.txt")
+	logPath = path.Join(strings.TrimPrefix(logPath, jobURIPrefix.String()), "build-log.txt")
 	if _, ok := indexedPaths.MetadataFor(logPath); ok {
 		return nil
 	}

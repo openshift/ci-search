@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,18 +28,35 @@ type PathIndexStats struct {
 }
 
 type Result struct {
+	// FailedAt is the time when the job failed.
 	FailedAt time.Time
+
+	// JobURI is the job detail page, e.g. https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
+	JobURI *url.URL
+
+	// FileType is the type of file where the match was found, e.g. "build-log" or "junit".
+	FileType string
+
+	// Trigger is "pull" or "build".
+	Trigger string
+
+	// Name is the name of the job, e.g. release-openshift-ocp-installer-e2e-aws-4.1 or pull-ci-openshift-origin-master-e2e-aws.
+	Name string
+
+	// Number is the job number, e.g. 309 for origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for origin-ci-test/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.
+	Number int
 }
 
 type ResultMetadata interface {
 	// MetadataFor returns metadata for the slash-separated path
 	// resolved relative to the index base.
-	MetadataFor(path string) (Result, bool)
+	MetadataFor(path string) (*Result, bool)
 }
 
 type pathIndex struct {
-	base   string
-	maxAge time.Duration
+	base    string
+	baseURI *url.URL
+	maxAge  time.Duration
 
 	lock      sync.Mutex
 	ordered   []pathAge
@@ -51,19 +70,55 @@ type pathAge struct {
 	age   time.Time
 }
 
-func (index *pathIndex) MetadataFor(path string) (Result, bool) {
-	var age time.Time
-	var ok bool
+func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
+	result := &Result{}
+
+	parts := strings.SplitN(path, "/", 8)
+	last := len(parts) - 1
+
+	result.JobURI = index.baseURI.ResolveReference(&url.URL{Path: strings.Join(parts[:last], "/")})
+
+	switch parts[last] {
+	case "build-log.txt":
+		result.FileType = "build-log"
+	case "junit.failures":
+		result.FileType = "junit"
+	default:
+		result.FileType = parts[last]
+	}
+
+	var err error
+	result.Number, err = strconv.Atoi(parts[last-1])
+	if err != nil {
+		glog.Errorf("Failed to convert %q to a job number for %s", parts[last-1], path)
+		return result, false
+	}
+
+	if last < 3 {
+		return result, false
+	}
+	result.Name = parts[last-2]
+
+	switch parts[1] {
+	case "logs":
+		result.Trigger = "build"
+	case "pr-logs":
+		result.Trigger = "pull"
+	default:
+		result.Trigger = parts[1]
+	}
+
 	index.lock.Lock()
 	position, ok := index.pathIndex[path]
 	if ok {
-		age = index.ordered[position].age
+		result.FailedAt = index.ordered[position].age
 	}
 	index.lock.Unlock()
 	if !ok {
-		return Result{}, false
+		return result, false
 	}
-	return Result{FailedAt: age}, true
+
+	return result, true
 }
 
 func (index *pathIndex) Load() error {
