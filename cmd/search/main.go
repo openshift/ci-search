@@ -29,9 +29,10 @@ func main() {
 	original.Set("v", "2")
 
 	opt := &options{
-		ListenAddr:   ":8080",
-		MaxAge:       14 * 24 * time.Hour,
-		JobURIPrefix: "https://openshift-gce-devel.appspot.com/build/",
+		ListenAddr:        ":8080",
+		MaxAge:            14 * 24 * time.Hour,
+		JobURIPrefix:      "https://openshift-gce-devel.appspot.com/build/",
+		ArtifactURIPrefix: "https://storage.googleapis.com/",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -51,6 +52,7 @@ func main() {
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "Path to a GCP service account file.")
 	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
+	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
 
 	if err := cmd.Execute(); err != nil {
@@ -67,6 +69,7 @@ type options struct {
 	Interval          time.Duration
 	GCPServiceAccount string
 	JobURIPrefix      string
+	ArtifactURIPrefix string
 	ConfigPath        string
 	DeckURI           string
 
@@ -79,6 +82,11 @@ func (o *options) Run() error {
 	jobURIPrefix, err := url.Parse(o.JobURIPrefix)
 	if err != nil {
 		glog.Exitf("Unable to parse --job-uri-prefix: %v", err)
+	}
+
+	artifactURIPrefix, err := url.Parse(o.ArtifactURIPrefix)
+	if err != nil {
+		glog.Exitf("Unable to parse --artifact-uri-prefix: %v", err)
 	}
 
 	indexedPaths := &pathIndex{
@@ -185,7 +193,7 @@ func (o *options) Run() error {
 						defer glog.V(4).Infof("Indexer completed")
 						defer wg.Done()
 						for job := range workCh {
-							if err := fetchJob(client, job, indexedPaths, o.Path, deckURI, jobURIPrefix); err != nil {
+							if err := fetchJob(client, job, indexedPaths, o.Path, jobURIPrefix, artifactURIPrefix, deckURI); err != nil {
 								glog.Warningf("Job index failed: %v", err)
 								continue
 							}

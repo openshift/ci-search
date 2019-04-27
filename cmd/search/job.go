@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -11,7 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/golang/glog"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
+
+var uriNotFoundError = errors.New("URI not found")
 
 type ProwJob struct {
 	Type     string `json:"type"`
@@ -22,7 +28,7 @@ type ProwJob struct {
 	BuildID  string `json:"build_id"`
 }
 
-func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, deckURL *url.URL, jobURIPrefix *url.URL) error {
+func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
 	date, err := time.Parse(time.RFC3339, job.Finished)
 	if err != nil {
 		return fmt.Errorf("prow job %s #%s had invalid date: %s", job.Job, job.BuildID, err)
@@ -36,13 +42,41 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return nil
 	}
 
-	logsURL := *deckURL
-	logsURL.Path = "/log"
-	query := url.Values{"id": []string{job.BuildID}, "job": []string{job.Job}}
-	logsURL.RawQuery = query.Encode()
-	resp, err := client.Get(logsURL.String())
+	uris := make([]*url.URL, 0, 2)
+	if artifactURIPrefix != nil {
+		uris = append(uris, artifactURIPrefix.ResolveReference(&url.URL{Path: logPath}))
+	}
+
+	if deckURI != nil {
+		uri := *deckURI
+		uri.Path = "/log"
+		query := url.Values{"id": []string{job.BuildID}, "job": []string{job.Job}}
+		uri.RawQuery = query.Encode()
+		uris = append(uris, &uri)
+	}
+
+	if len(uris) == 0 {
+		return fmt.Errorf("either the artifact-URI prefix or the deck URI must be set")
+	}
+
+	pathOnDisk := filepath.Join(toDir, filepath.FromSlash(logPath))
+	errs := []error{}
+	for _, uri := range uris {
+		err = fetchArtifact(client, uri, pathOnDisk, date)
+		if err == nil {
+			break
+		} else if err != uriNotFoundError {
+			errs = append(errs, err)
+		}
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
+func fetchArtifact(client *http.Client, uri *url.URL, path string, date time.Time) error {
+	defer glog.V(4).Infof("Fetch %s to %s", uri, path)
+	resp, err := client.Get(uri.String())
 	if err != nil {
-		return fmt.Errorf("unable to index prow jobs from Deck: %v", err)
+		return fmt.Errorf("unable to fetch artifact: %v", err)
 	}
 	defer func() {
 		// ensure we pull the body completely so connections are reused
@@ -51,28 +85,33 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == 404 {
-			return nil
+			return uriNotFoundError
 		}
-		return fmt.Errorf("unable to query prow job logs %s: %d %s", logsURL.String(), resp.StatusCode, resp.Status)
+		return fmt.Errorf("unable to fetch artifact %s: %d %s", uri.String(), resp.StatusCode, resp.Status)
 	}
-	pathOnDisk := filepath.Join(toDir, filepath.FromSlash(logPath))
-	parent := filepath.Dir(pathOnDisk)
+
+	parent := filepath.Dir(path)
 	if err := os.MkdirAll(parent, 0777); err != nil {
-		return fmt.Errorf("unable to create directory for prow job index: %v", err)
+		return fmt.Errorf("unable to create directory for artifact: %v", err)
 	}
-	f, err := os.OpenFile(pathOnDisk, os.O_EXCL|os.O_CREATE|os.O_WRONLY, 0644)
+
+	f, err := os.OpenFile(path, os.O_EXCL|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("unable to index prow jobs from Deck, could not create log file: %v", err)
+		return fmt.Errorf("unable to fetch artifact, could not create log file: %v", err)
 	}
 	defer f.Close()
+
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		return fmt.Errorf("unable to index prow jobs from Deck, could not copy log file: %v", err)
+		return fmt.Errorf("unable to fetch artifact, could not copy log file: %v", err)
 	}
+
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("unable to index prow jobs from Deck, could not close log file: %v", err)
+		return fmt.Errorf("unable to fetch artifact, could not close log file: %v", err)
 	}
-	if err := os.Chtimes(pathOnDisk, date, date); err != nil {
+
+	if err := os.Chtimes(path, date, date); err != nil {
 		return fmt.Errorf("unable to set file time while indexing to disk: %v", err)
 	}
+
 	return nil
 }
