@@ -280,7 +280,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/"), "build-log.txt")
-	if _, ok := indexedPaths.MetadataFor("/" + logPath); ok {
+	if _, ok := indexedPaths.MetadataFor(logPath); ok {
 		return nil
 	}
 
