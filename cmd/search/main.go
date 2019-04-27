@@ -99,7 +99,9 @@ func (o *options) Run() error {
 
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
+		mux.HandleFunc("/chart", o.handleChart)
 		mux.HandleFunc("/config", o.handleConfig)
+		mux.HandleFunc("/jobs", o.handleJobs)
 		mux.HandleFunc("/search", o.handleSearch)
 		mux.HandleFunc("/", o.handleIndex)
 
@@ -205,9 +207,17 @@ func (o *options) Run() error {
 						glog.Errorf("Unable to query prow jobs: %d %s", resp.StatusCode, resp.Status)
 						return
 					}
-					d := json.NewDecoder(resp.Body)
+
+					jobLock.Lock()
+					jobBytes, err = ioutil.ReadAll(resp.Body)
+					jobLock.Unlock() // leaks on any ReadAll panics, but we don't recover, so that's ok
+					if err != nil {
+						glog.Errorf("Unable to read prow jobs from Deck: %v", err)
+						return
+					}
+
 					var jobs []ProwJob
-					if err := d.Decode(&jobs); err != nil {
+					if err := json.Unmarshal(jobBytes, &jobs); err != nil {
 						glog.Errorf("Unable to decode prow jobs from Deck: %v", err)
 						return
 					}
