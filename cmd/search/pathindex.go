@@ -146,21 +146,17 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 
 	all := len(index.SearchType) == 0 || index.SearchType == "all"
 
+	var oldest time.Time
 	if index.MaxAge > 0 {
-		oldest := time.Now().Add(-index.MaxAge)
-		for _, path := range paths {
-			if path.age.Before(oldest) {
-				break
-			}
-			if all || path.index == index.SearchType {
-				initial = append(initial, path.path)
-			}
+		oldest = time.Now().Add(-index.MaxAge)
+	}
+
+	for _, path := range paths {
+		if path.age.Before(oldest) {
+			break
 		}
-	} else {
-		for _, path := range paths {
-			if all || path.index == index.SearchType {
-				initial = append(initial, path.path)
-			}
+		if all || path.index == index.SearchType {
+			initial = append(initial, path.path)
 		}
 	}
 	return initial
