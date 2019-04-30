@@ -293,10 +293,12 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:d1d32e0fbb5f7054e4b20db7a8c576d425732158005e12adb0d936ce89b72c76"
+  digest = "1:9de022792db473d7c330863ce25087ae5a7eedcdcafbe08c29d8799c724ccde7"
   name = "k8s.io/apimachinery"
   packages = [
+    "pkg/util/errors",
     "pkg/util/runtime",
+    "pkg/util/sets",
     "pkg/util/wait",
   ]
   pruneopts = "UT"
@@ -348,6 +350,7 @@
     "google.golang.org/grpc/credentials",
     "google.golang.org/grpc/credentials/oauth",
     "google.golang.org/grpc/metadata",
+    "k8s.io/apimachinery/pkg/util/errors",
     "k8s.io/apimachinery/pkg/util/wait",
     "sigs.k8s.io/yaml",
     "vbom.ml/util/sortorder",
