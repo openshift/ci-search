@@ -12,7 +12,11 @@ import (
 )
 
 type PathAccessor interface {
+	// SearchPaths searches for paths matching the index's SearchType
+	// and MaxAge, and returns them as a slice of filesystem paths.
 	SearchPaths(*Index, []string) []string
+
+	// Stats returns aggregate statistics for the indexed paths.
 	Stats() PathIndexStats
 }
 
@@ -26,6 +30,8 @@ type Result struct {
 }
 
 type ResultMetadata interface {
+	// MetadataFor returns metadata for the slash-separated path
+	// resolved relative to the index base.
 	MetadataFor(path string) (Result, bool)
 }
 
@@ -88,15 +94,20 @@ func (index *pathIndex) Load() error {
 		if info.IsDir() {
 			return nil
 		}
+		relPath, err := filepath.Rel(index.base, path)
+		if err != nil {
+			return err
+		}
+		relPath = filepath.ToSlash(relPath)
 		switch info.Name() {
 		case "build-log.txt":
 			stats.Entries++
 			stats.Size += info.Size()
-			ordered = append(ordered, pathAge{index: "build-log", path: path, age: info.ModTime()})
+			ordered = append(ordered, pathAge{index: "build-log", path: relPath, age: info.ModTime()})
 		case "junit.failures":
 			stats.Entries++
 			stats.Size += info.Size()
-			ordered = append(ordered, pathAge{index: "junit", path: path, age: info.ModTime()})
+			ordered = append(ordered, pathAge{index: "junit", path: relPath, age: info.ModTime()})
 		}
 		return nil
 	})
@@ -156,7 +167,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 			break
 		}
 		if all || path.index == index.SearchType {
-			initial = append(initial, path.path)
+			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
 		}
 	}
 	return initial
