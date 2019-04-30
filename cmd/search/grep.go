@@ -355,7 +355,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 
 	// search all if we haven't built an index yet
 	if len(paths) == 0 {
-		return []string{i.base}
+		return append(initial, i.base)
 	}
 
 	// grow the map to the desired size up front
