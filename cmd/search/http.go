@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -165,6 +166,14 @@ func (o *options) parseRequest(req *http.Request) (*Index, error) {
 		index.SearchType = "all"
 	default:
 		return nil, fmt.Errorf("search must be 'junit', 'build-log', or 'all'")
+	}
+
+	if value := req.FormValue("name"); len(value) > 0 {
+		var err error
+		index.Job, err = regexp.Compile(value)
+		if err != nil {
+			return nil, fmt.Errorf("name is an invalid regular expression: %v", err)
+		}
 	}
 
 	if value := req.FormValue("maxAge"); len(value) > 0 {
