@@ -174,7 +174,7 @@ func (o *options) Run() error {
 			deckURI = u
 		}
 
-		glog.Infof("Starting build-indexer every %s", o.Interval)
+		glog.Infof("Starting build indexing (every %s)", o.Interval)
 		wait.Forever(func() {
 			var wg sync.WaitGroup
 			if deckURI != nil {
@@ -236,34 +236,36 @@ func (o *options) Run() error {
 				}()
 			}
 
-			wg.Add(1)
-			go func() {
-				defer glog.V(4).Infof("build-indexer completed")
-				defer wg.Done()
-				args := []string{"--config", o.ConfigPath, "--path", o.Path, "--max-results", "500"}
-				if len(o.GCPServiceAccount) > 0 {
-					args = append(args, "--gcp-service-account", o.GCPServiceAccount)
-				}
-				if !indexedAt.IsZero() {
-					args = append(args, "--finished-after", strconv.FormatInt(indexedAt.Unix(), 10))
-				}
-				cmd := exec.Command("build-indexer", args...)
-				cmd.Stdout = os.Stderr
-				cmd.Stderr = os.Stderr
+			if o.ConfigPath != "" {
+				wg.Add(1)
+				go func() {
+					defer glog.V(4).Infof("build-indexer completed")
+					defer wg.Done()
+					args := []string{"--config", o.ConfigPath, "--path", o.Path, "--max-results", "500"}
+					if len(o.GCPServiceAccount) > 0 {
+						args = append(args, "--gcp-service-account", o.GCPServiceAccount)
+					}
+					if !indexedAt.IsZero() {
+						args = append(args, "--finished-after", strconv.FormatInt(indexedAt.Unix(), 10))
+					}
+					cmd := exec.Command("build-indexer", args...)
+					cmd.Stdout = os.Stderr
+					cmd.Stderr = os.Stderr
 
-				indexedAt = time.Now()
-				if err := cmd.Run(); err != nil {
-					glog.Errorf("Failed to index: %v", err)
-					return
-				}
-				indexDuration := time.Now().Sub(indexedAt)
+					indexedAt = time.Now()
+					if err := cmd.Run(); err != nil {
+						glog.Errorf("Failed to index: %v", err)
+						return
+					}
+					indexDuration := time.Now().Sub(indexedAt)
 
-				// keep the index time stored on successful updates
-				glog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
-				if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
-					glog.Errorf("Failed to write index marker: %v", err)
-				}
-			}()
+					// keep the index time stored on successful updates
+					glog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
+					if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
+						glog.Errorf("Failed to write index marker: %v", err)
+					}
+				}()
+			}
 
 			wg.Wait()
 
