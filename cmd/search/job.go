@@ -32,7 +32,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, "https://openshift-gce-devel.appspot.com/build/"), "build-log.txt")
-	if _, ok := indexedPaths.MetadataFor("/" + logPath); ok {
+	if _, ok := indexedPaths.MetadataFor(logPath); ok {
 		return nil
 	}
 
@@ -55,7 +55,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		}
 		return fmt.Errorf("unable to query prow job logs %s: %d %s", logsURL.String(), resp.StatusCode, resp.Status)
 	}
-	pathOnDisk := filepath.Join(append([]string{toDir}, strings.Split(logPath, "/")...)...)
+	pathOnDisk := filepath.Join(toDir, filepath.FromSlash(logPath))
 	parent := filepath.Dir(pathOnDisk)
 	if err := os.MkdirAll(parent, 0777); err != nil {
 		return fmt.Errorf("unable to create directory for prow job index: %v", err)

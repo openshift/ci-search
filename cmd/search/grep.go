@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -84,6 +85,14 @@ func NewCommandGenerator(searchPath string, paths PathAccessor) (CommandGenerato
 	return nil, fmt.Errorf("could not find 'rg' or 'grep' on the path")
 }
 
+// executeGrep search for matches to index and, for each match found,
+// calls fn with the following arguments:
+//
+// * name, the name of the matching file, as a slash-slash-separated path
+//   resolved relative to the index base.
+// * lines, the match with its surrounding context.
+// * moreLines, the number of elided lines, when the match and context
+//   is truncated due to excessive length.
 func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, lines []bytes.Buffer, moreLines int)) error {
 	commandPath, commandArgs := gen.Command(index)
 	pathPrefix := gen.PathPrefix()
@@ -118,17 +127,17 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 			return nil
 		}
 
-		name := filename.Bytes()
-		name = name[:len(name)-1]
-		if !bytes.HasPrefix(name, []byte(pathPrefix)) {
-			return fmt.Errorf("grep returned filename %q which doesn't start with %q", string(name), pathPrefix)
+		path := filename.String()
+		path = path[:len(path)-1]
+		relPath, err := filepath.Rel(pathPrefix, path)
+		if err != nil {
+			return err
 		}
-		name = name[len(pathPrefix):]
 
 		hidden := (line) - len(result)
-		//glog.V(2).Infof("Captured %d lines for %s, %d not shown", line, string(name), hidden)
+		//glog.V(2).Infof("Captured %d lines for %s, %d not shown", line, path, hidden)
 		matches++
-		fn(string(name), result, hidden)
+		fn(filepath.ToSlash(relPath), result, hidden)
 		return nil
 	}
 

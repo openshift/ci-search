@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -202,7 +201,6 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
-		name = strings.Trim(name, "/")
 		if lastName == name {
 			fmt.Fprintf(bw, "\n&mdash;\n\n")
 		} else {
@@ -220,7 +218,7 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 			}
 
 			fmt.Fprintf(bw, `<div class="mb-4">`)
-			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
+			parts := bytes.SplitN([]byte(name), []byte("/"), 8)
 			last := len(parts) - 1
 			switch {
 			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
@@ -287,7 +285,6 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
-		name = strings.Trim(name, "/")
 		if lastName == name {
 			// continue accumulating matches
 		} else {
@@ -308,7 +305,7 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 			}
 
 			fmt.Fprintf(bw, `<tr>`)
-			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
+			parts := bytes.SplitN([]byte(name), []byte("/"), 8)
 			last := len(parts) - 1
 			switch {
 			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
