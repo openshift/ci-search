@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ type pathAge struct {
 	age   time.Time
 }
 
-func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
+func (index *pathIndex) parseJobPath(path string) (*Result, error) {
 	result := &Result{}
 
 	parts := strings.SplitN(path, "/", 8)
@@ -90,12 +91,11 @@ func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
 	var err error
 	result.Number, err = strconv.Atoi(parts[last-1])
 	if err != nil {
-		glog.Errorf("Failed to convert %q to a job number for %s", parts[last-1], path)
-		return result, false
+		return result, err
 	}
 
 	if last < 3 {
-		return result, false
+		return result, fmt.Errorf("not enough parts (%d < 3)", last)
 	}
 	result.Name = parts[last-2]
 
@@ -106,6 +106,16 @@ func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
 		result.Trigger = "pull"
 	default:
 		result.Trigger = parts[1]
+	}
+
+	return result, nil
+}
+
+func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
+	result, err := index.parseJobPath(path)
+	if err != nil {
+		glog.Errorf("Failed to parse job path for %q: %v", path, err)
+		return result, false
 	}
 
 	index.lock.Lock()
@@ -218,6 +228,12 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 	}
 
 	for _, path := range paths {
+		if index.Job != nil {
+			metadata, err := i.parseJobPath(path.path)
+			if err == nil && index.Job.FindStringIndex(metadata.Name) == nil {
+				continue
+			}
+		}
 		if path.age.Before(oldest) {
 			break
 		}

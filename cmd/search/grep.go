@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"syscall"
 	"time"
@@ -17,11 +18,23 @@ import (
 )
 
 type Index struct {
-	Search     []string
-	SearchType string
-	Context    int
+	Search []string
 
+	// Filtering the body of material being searched.
+
+	// Search excludes jobs whose Result.FileType does not match.
+	SearchType string
+
+	// Job excludes jobs whose Result.Name does not match.
+	Job *regexp.Regexp
+
+	// MaxAge excludes jobs which failed longer than MaxAge ago.
 	MaxAge time.Duration
+
+	// Output configuration.
+
+	// Context includes this many lines of context around each match.
+	Context int
 }
 
 type CommandGenerator interface {
