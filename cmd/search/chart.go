@@ -36,8 +36,11 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err = htmlChart.Execute(w, map[string]interface{}{
-		"index": index,
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+
+	err = htmlChart.Execute(writer, map[string]interface{}{
+		"index":  index,
 		"counts": counts,
 	})
 	if err != nil {

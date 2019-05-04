@@ -64,5 +64,10 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+
+	if _, err = writer.Write(data); err != nil {
+		glog.Errorf("Failed to write response: %v", err)
+	}
 }

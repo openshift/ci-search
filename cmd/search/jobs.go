@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+
+	"github.com/golang/glog"
 )
 
 var jobLock sync.Mutex
@@ -30,5 +32,10 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 
 	jobLock.Lock()
 	defer jobLock.Unlock()
-	w.Write(jobBytes)
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+
+	if _, err := writer.Write(jobBytes); err != nil {
+		glog.Errorf("Failed to write response: %v", err)
+	}
 }

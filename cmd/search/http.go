@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"regexp"
@@ -28,13 +29,23 @@ type Match struct {
 }
 
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
+	o.ConfigPath = "README.md"
+	if o.ConfigPath == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	data, err := ioutil.ReadFile(o.ConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to read config: %v", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write(data)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+	if _, err = writer.Write(data); err != nil {
+		glog.Errorf("Failed to write response: %v", err)
+	}
 }
 
 func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
@@ -97,44 +108,48 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
-	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI")
+	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
 		stats := o.accessor.Stats()
-		fmt.Fprintf(w, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
-		fmt.Fprintf(w, htmlPageEnd)
+		fmt.Fprintf(writer, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
+		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
 
 	// perform a search
 	flusher.Flush()
-	fmt.Fprintf(w, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
+	fmt.Fprintf(writer, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
 
 	start := time.Now()
 
 	var count int
 	if index.Context >= 0 {
-		count, err = renderWithContext(req.Context(), w, index, o.generator, start, o.metadata)
+		count, err = renderWithContext(req.Context(), writer, index, o.generator, start, o.metadata)
 	} else {
-		count, err = renderSummary(req.Context(), w, index, o.generator, start, o.metadata)
+		count, err = renderSummary(req.Context(), writer, index, o.generator, start, o.metadata)
 	}
 
 	duration := time.Now().Sub(start)
 	if err != nil {
 		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
-		fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
-		fmt.Fprintf(w, htmlPageEnd)
+		fmt.Fprintf(writer, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
+		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
 	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
 	stats := o.accessor.Stats()
-	fmt.Fprintf(w, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
-	fmt.Fprintf(w, "</div>")
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
+	fmt.Fprintf(writer, "</div>")
 
-	fmt.Fprintf(w, htmlPageEnd)
+	fmt.Fprintf(writer, htmlPageEnd)
 }
 
 func (o *options) parseRequest(req *http.Request, mode string) (*Index, error) {
@@ -267,7 +282,7 @@ func durationSelected(current, expected time.Duration) string {
 	return ""
 }
 
-func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	lineCount := 0
 	var lastName string
@@ -331,7 +346,7 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 	return count, err
 }
 
-func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+func renderSummary(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	currentLines := 0
 	var lastName string
