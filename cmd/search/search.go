@@ -10,7 +10,7 @@ import (
 )
 
 func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
-	index, err := o.parseRequest(req)
+	index, err := o.parseRequest(req, "text")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return

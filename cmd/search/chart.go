@@ -5,82 +5,15 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"regexp"
-	"time"
 
 	"github.com/golang/glog"
 )
 
 func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
-	index, err := o.parseRequest(req)
+	index, err := o.parseRequest(req, "chart")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
-	}
-	index.Context = 0
-
-	if index.MaxAge == 0 || index.MaxAge > 24*time.Hour {
-		index.MaxAge = 24*time.Hour
-	}
-
-	if index.Job == nil {
-		index.Job, err = regexp.Compile("-e2e-")
-		if err != nil {
-			http.Error(w, fmt.Sprintf("name is an invalid regular expression: %v", err), http.StatusBadRequest)
-		}
-	}
-
-	if len(index.Search) == 0 {
-		// Basic source issues
-		//index.Search = append(index.Search, "CONFLICT .*Merge conflict in .*")
-
-		// CI-cluster issues
-		index.Search = append(index.Search, "could not create or restart template instance.*");
-		index.Search = append(index.Search, "could not (wait for|get) build.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1696483
-		/*
-		index.Search = append(index.Search, "could not copy .* imagestream.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703510
-		index.Search = append(index.Search, "error: image .*registry.svc.ci.openshift.org/.* does not exist");
-		index.Search = append(index.Search, "unable to find the .* image in the provided release image");
-		index.Search = append(index.Search, "error: Process interrupted with signal interrupt.*");
-		index.Search = append(index.Search, "pods .* already exists|pod .* was already deleted");
-		index.Search = append(index.Search, "could not wait for RPM repo server to deploy.*");
-		index.Search = append(index.Search, "could not start the process: fork/exec hack/tests/e2e-scaleupdown-previous.sh: no such file or directory");  // https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/periodic-ci-azure-e2e-scaleupdown-v4.2/5
-		*/
-
-		// Installer and bootstrapping issues issues
-		index.Search = append(index.Search, "level=error.*timeout while waiting for state.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
-		/*
-		index.Search = append(index.Search, "checking install permissions: error simulating policy: Throttling: Rate exceeded");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
-		index.Search = append(index.Search, "level=error.*Failed to reach target state.*");
-		index.Search = append(index.Search, "waiting for Kubernetes API: context deadline exceeded");
-		index.Search = append(index.Search, "failed to wait for bootstrapping to complete.*");
-		index.Search = append(index.Search, "failed to initialize the cluster.*");
-		*/
-		index.Search = append(index.Search, "Container setup exited with code ., reason Error");
-		//index.Search = append(index.Search, "Container setup in pod .* completed successfully");
-
-		// Cluster-under-test issues
-		index.Search = append(index.Search, "no providers available to validate pod");  // https://bugzilla.redhat.com/show_bug.cgi?id=1705102
-		index.Search = append(index.Search, "Error deleting EBS volume .* since volume is currently attached");  // https://bugzilla.redhat.com/show_bug.cgi?id=1704356
-		index.Search = append(index.Search, "clusteroperator/.* changed Degraded to True: .*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1702829 https://bugzilla.redhat.com/show_bug.cgi?id=1702832
-		index.Search = append(index.Search, "Cluster operator .* is still updating.*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700416
-		index.Search = append(index.Search, "Pod .* is not healthy"); // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700100
-		/*
-		index.Search = append(index.Search, "failed: .*oc new-app  should succeed with a --name of 58 characters");  // https://bugzilla.redhat.com/show_bug.cgi?id=1535099
-		index.Search = append(index.Search, "failed to get logs from .*an error on the server");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690168 closed as a dup of https://bugzilla.redhat.com/show_bug.cgi?id=1691055
-		index.Search = append(index.Search, "openshift-apiserver OpenShift API is not responding to GET requests");  // https://bugzilla.redhat.com/show_bug.cgi?id=1701291
-		index.Search = append(index.Search, "Cluster did not complete upgrade: timed out waiting for the condition");
-		index.Search = append(index.Search, "Cluster did not acknowledge request to upgrade in a reasonable time: timed out waiting for the condition");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703158 , also mentioned in https://bugzilla.redhat.com/show_bug.cgi?id=1701291#c1
-		index.Search = append(index.Search, "failed: .*Cluster upgrade should maintain a functioning cluster");
-		*/
-
-		// generic patterns so you can hover to see details in the tooltip
-		/*
-		index.Search = append(index.Search, "error.*");
-		index.Search = append(index.Search, "failed.*");
-		index.Search = append(index.Search, "fatal.*");
-		*/
-		index.Search = append(index.Search, "failed: \\(.*");
 	}
 
 	counts := make(map[string]int, len(index.Search))
