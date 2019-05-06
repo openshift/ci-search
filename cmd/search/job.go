@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,16 +24,37 @@ type ProwJob struct {
 	Type     string `json:"type"`
 	State    string `json:"state"`
 	URL      string `json:"url"`
+	Started  string `json:"started"`
 	Finished string `json:"finished"`
 	Job      string `json:"job"`
 	BuildID  string `json:"build_id"`
 }
 
-func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
-	date, err := time.Parse(time.RFC3339, job.Finished)
+func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
+	var zero time.Time
+
+	started, err := strconv.ParseInt(job.Started, 10, 64)
 	if err != nil {
-		return fmt.Errorf("prow job %s #%s had invalid date: %s", job.Job, job.BuildID, err)
+		return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'started': %s", job.Job, job.BuildID, err)
 	}
+
+	var finished time.Time
+	if job.Finished != "" {
+		finished, err = time.Parse(time.RFC3339, job.Finished)
+		if err != nil {
+			return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'finished': %s", job.Job, job.BuildID, err)
+		}
+	}
+
+	return time.Unix(started, 0).UTC(), finished, nil
+}
+
+func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
+	_, stop, err := job.StartStop()
+	if err != nil {
+		return err
+	}
+
 	logPath := job.URL
 	if !strings.HasPrefix(logPath, jobURIPrefix.String()) {
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
@@ -62,7 +84,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 	pathOnDisk := filepath.Join(toDir, filepath.FromSlash(logPath))
 	errs := []error{}
 	for _, uri := range uris {
-		err = fetchArtifact(client, uri, pathOnDisk, date)
+		err = fetchArtifact(client, uri, pathOnDisk, stop)
 		if err == nil {
 			break
 		} else if err != uriNotFoundError {

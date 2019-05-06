@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -38,4 +39,12 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	if _, err := writer.Write(jobBytes); err != nil {
 		glog.Errorf("Failed to write response: %v", err)
 	}
+}
+
+func getJobs() ([]ProwJob, error) {
+	jobLock.Lock()
+	defer jobLock.Unlock()
+	var jobs []ProwJob
+	err := json.Unmarshal(jobBytes, &jobs)
+	return jobs, err
 }

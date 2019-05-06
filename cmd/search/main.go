@@ -108,6 +108,7 @@ func (o *options) Run() error {
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
 		mux.HandleFunc("/chart", o.handleChart)
+		mux.HandleFunc("/chart.png", o.handleChartPNG)
 		mux.HandleFunc("/config", o.handleConfig)
 		mux.HandleFunc("/jobs", o.handleJobs)
 		mux.HandleFunc("/search", o.handleSearch)
@@ -216,19 +217,22 @@ func (o *options) Run() error {
 						return
 					}
 
-					jobLock.Lock()
-					jobBytes, err = ioutil.ReadAll(resp.Body)
-					jobLock.Unlock() // leaks on any ReadAll panics, but we don't recover, so that's ok
+					newBytes, err := ioutil.ReadAll(resp.Body)
 					if err != nil {
 						glog.Errorf("Unable to read prow jobs from Deck: %v", err)
 						return
 					}
 
 					var jobs []ProwJob
-					if err := json.Unmarshal(jobBytes, &jobs); err != nil {
+					if err := json.Unmarshal(newBytes, &jobs); err != nil {
 						glog.Errorf("Unable to decode prow jobs from Deck: %v", err)
 						return
 					}
+
+					jobLock.Lock()
+					jobBytes = newBytes
+					jobLock.Unlock() // leaks on any panics, but we don't recover, so that's ok
+
 					glog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs))
 					for i := range jobs {
 						job := &jobs[i]

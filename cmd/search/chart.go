@@ -4,12 +4,43 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"image/color"
 	"net/http"
+	"net/url"
 
 	"github.com/golang/glog"
 )
 
+var colors = []color.Color{
+	color.RGBA{0x80, 0x00, 0x00, 0xff}, // maroon
+	color.RGBA{0xfa, 0xbe, 0xbe, 0xff}, // pink
+	color.RGBA{0xe6, 0xbe, 0xff, 0xff}, // lavender
+	color.RGBA{0x00, 0x00, 0x75, 0xff}, // navy
+	color.RGBA{0x43, 0x63, 0xd8, 0xff}, // blue
+	color.RGBA{0x00, 0x00, 0x00, 0xff}, // black
+	color.RGBA{0xe6, 0x19, 0x4B, 0xff}, // red
+	color.RGBA{0x42, 0xd4, 0xf4, 0xff}, // cyan
+	color.RGBA{0xf0, 0x32, 0xe6, 0xff}, // magenta
+	color.RGBA{0x46, 0x99, 0x90, 0xff}, // teal
+	color.RGBA{0x9A, 0x63, 0x24, 0xff}, // brown
+	color.RGBA{0xaa, 0xff, 0xc3, 0xff}, // mint
+	color.RGBA{0x91, 0x1e, 0xb4, 0xff}, // purple
+	color.RGBA{0x80, 0x80, 0x00, 0xff}, // olive
+	color.RGBA{0xff, 0xd8, 0xb1, 0xff}, // apricot
+}
+
+var specialColors = map[string]color.Color{
+	"failure": color.RGBA{0xf5, 0x82, 0x31, 0xff}, // orange
+	"pending": color.RGBA{0xff, 0xe1, 0x19, 0xff}, // yellow
+	"success": color.RGBA{0xa9, 0xa9, 0xa9, 0xff}, // gray
+}
+
 func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
+	if req.Header.Get("Accept") == "text/png" {
+		o.handleChartPNG(w, req)
+		return
+	}
+
 	index, err := o.parseRequest(req, "chart")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
@@ -39,22 +70,40 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 
+	// The Open Graph image needs an absolute URI, so try to figure that out.
+	openGraphImage := &url.URL{
+		Scheme:   "https", // hopefully
+		Host:     req.Host,
+		Path:     req.URL.Path + ".png",
+		RawQuery: req.URL.RawQuery,
+	}
+
 	err = htmlChart.Execute(writer, map[string]interface{}{
-		"index":  index,
-		"counts": counts,
+		"index":          index,
+		"colors":         colors,
+		"counts":         counts,
+		"openGraphImage": openGraphImage.String(),
+		"specialColors":  specialColors,
 	})
 	if err != nil {
 		glog.Errorf("Failed to execute chart template: %v", err)
 	}
 }
 
-var htmlChart = template.Must(template.New("chart").Parse(`<!DOCTYPE html>
+func hexColor(color color.Color) string {
+	r, g, b, _ := color.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
+}
+
+var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}{
+	"hexColor": hexColor,
+}).Parse(`<!DOCTYPE html>
 <html>
   <head>
     <title>OpenShift CI Search</title>
     <meta charset="UTF-8">
     <meta name="description" content="{{.index.Job}} failure rates: {{with $dot := .}}{{range $index, $element := $dot.index.Search}}{{if $index}}, {{end}}{{index $dot.counts $element}} {{$element}}{{end}}{{end}}" />
-    <meta property="og:image" content="https://raw.githubusercontent.com/wking/openshift-release/debug-scripts/d3/deck.png" />
+    <meta property="og:image" content="{{.openGraphImage}}" />
     <style type="text/css">
       html, body {
         margin: 0;
@@ -112,21 +161,9 @@ var htmlChart = template.Must(template.New("chart").Parse(`<!DOCTYPE html>
 {{- end}}
 
       var regexpColors = [
-        '#800000',  // maroon
-        '#fabebe',  // pink
-        '#e6beff',  // lavender
-        '#000075',  // navy
-        '#4363d8',  // blue
-        '#000000',  // black
-        '#e6194B',  // red
-        '#42d4f4',  // cyan
-        '#f032e6',  // magenta
-        '#469990',  // teal
-        '#9A6324',  // brown
-        '#aaffc3',  // mint
-        '#911eb4',  // purple
-        '#808000',  // olive
-        '#ffd8b1',  // apricot
+{{range .colors}}
+        '{{hexColor .}}',
+{{- end}}
       ];
       var jobs = [];
 
@@ -165,11 +202,11 @@ var htmlChart = template.Must(template.New("chart").Parse(`<!DOCTYPE html>
         case 'aborted':
           return;
         case 'success':
-          return '#a9a9a9';  // gray
+          return '{{hexColor .specialColors.success}}';
         case 'failure':
-          return '#f58231';  // orange
+          return '{{hexColor .specialColors.failure}}';
         case 'pending':
-          return '#ffe119';  // yellow
+          return '{{hexColor .specialColors.pending}}';
         case 'triggered':
           return;  // we don't care about these
         default:

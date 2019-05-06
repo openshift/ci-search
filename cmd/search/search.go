@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,9 +22,31 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	result, err := o.searchResult(req.Context(), index)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusInternalServerError)
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to serialize result: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+
+	if _, err = writer.Write(data); err != nil {
+		glog.Errorf("Failed to write response: %v", err)
+	}
+}
+
+// searchResult returns a result[uri][search][]*Match.
+func (o *options) searchResult(ctx context.Context, index *Index) (map[string]map[string][]*Match, error) {
 	result := map[string]map[string][]*Match{}
 
-	err = executeGrep(req.Context(), o.generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, o.generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		metadata, _ := o.metadata.MetadataFor(name)
 
 		if metadata.JobURI == nil {
@@ -52,22 +75,6 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 		}
 		result[uri][search] = append(result[uri][search], match)
 	})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusBadRequest)
-		return
-	}
 
-	data, err := json.Marshal(result)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Unable to serialize result: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	writer := encodedWriter(w, req)
-	defer writer.Close()
-
-	if _, err = writer.Write(data); err != nil {
-		glog.Errorf("Failed to write response: %v", err)
-	}
+	return result, err
 }
