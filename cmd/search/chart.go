@@ -243,6 +243,9 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       function legendClick(datum, index) {
         var oldRegexp = [...regexps.keys()][index];
         var newRegexp = window.prompt('build-log regexp', oldRegexp);
+         if (newRegexp == null) {
+           return;
+         }
         if (newRegexp === oldRegexp) {
           return;
         } else if (newRegexp === '') {
@@ -328,6 +331,9 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
           .style('cursor', 'pointer')
           .on('click', () => {
              var newFilter = window.prompt('job name filter', filter);
+             if (newFilter == null) {
+               return;
+             }
              if (newFilter) {
                filter = newFilter;
                redraw();
@@ -467,6 +473,9 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
 
       d3.select('#add-regexp').on('click', () => {
          var newRegexp = window.prompt('build log regexp', '');
+         if (newRegexp == null) {
+           return;
+         }
          regexps.set(newRegexp, new Map());
          search();
       });
