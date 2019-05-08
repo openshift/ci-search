@@ -117,10 +117,16 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         width: 100%;
         height: 100%;
       }
+      #add-regexp {
+        display: block;
+        position: absolute;
+        z-index: 1000;
+      }
     </style>
   </head>
   <body>
     <script src="https://d3js.org/d3.v5.min.js"></script>
+    <button id="add-regexp">Add regexp</button>
     <script>
       var markRadius = 5;
       var markOpacity = 0.75;
@@ -458,6 +464,12 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
 
       refetch(60000);
       resize();
+
+      d3.select('#add-regexp').on('click', () => {
+         newRegexp = window.prompt('build log regexp', '');
+         regexps.set(newRegexp, new Map());
+         search();
+      });
 
       window.addEventListener('resize', resize);
       window.addEventListener('keyup', event => {
