@@ -466,7 +466,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       resize();
 
       d3.select('#add-regexp').on('click', () => {
-         newRegexp = window.prompt('build log regexp', '');
+         var newRegexp = window.prompt('build log regexp', '');
          regexps.set(newRegexp, new Map());
          search();
       });
