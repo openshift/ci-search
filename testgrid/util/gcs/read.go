@@ -156,8 +156,8 @@ func dropPrefix(name string) string {
 //   "Timestamp": "20180102-1256",
 //   "Thread": "07",
 // }
-func parseSuitesMeta(name string) map[string]string {
-	mat := re.FindStringSubmatch(name)
+func parseSuitesMeta(obj *storage.ObjectAttrs) map[string]string {
+	mat := re.FindStringSubmatch(obj.Name)
 	if mat == nil {
 		return nil
 	}
@@ -215,7 +215,7 @@ func (build Build) Finished() (*Finished, error) {
 }
 
 // Artifacts writes the object name of all paths under the build's artifact dir to the output channel.
-func (build Build) Artifacts(artifacts chan<- string) error {
+func (build Build) Artifacts(artifacts chan<- *storage.ObjectAttrs) error {
 	pref := build.Prefix
 	objs := build.Bucket.Objects(build.Context, &storage.Query{Prefix: pref})
 	for {
@@ -229,7 +229,7 @@ func (build Build) Artifacts(artifacts chan<- string) error {
 		select {
 		case <-build.Context.Done():
 			return fmt.Errorf("interrupted listing %s", pref)
-		case artifacts <- obj.Name:
+		case artifacts <- obj:
 		}
 	}
 	return nil
@@ -264,7 +264,7 @@ type SuitesMeta struct {
 // Suites takes a channel of artifact names, parses those representing junit suites, writing the result to the suites channel.
 //
 // Note that junit suites are parsed in parallel, so there are no guarantees about suites ordering.
-func (build Build) Suites(artifacts <-chan string, suites chan<- SuitesMeta) error {
+func (build Build) Suites(artifacts <-chan *storage.ObjectAttrs, suites chan<- SuitesMeta) error {
 
 	var wg sync.WaitGroup
 	ec := make(chan error)
@@ -297,7 +297,7 @@ func (build Build) Suites(artifacts <-chan string, suites chan<- SuitesMeta) err
 			case <-ctx.Done():
 			case suites <- out:
 			}
-		}(art, meta)
+		}(art.Name, meta)
 	}
 
 	go func() {
