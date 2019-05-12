@@ -49,7 +49,7 @@ type Summarizer interface {
 }
 
 type Accumulator interface {
-	Artifacts(context.Context, <-chan string, chan<- string) error
+	Artifacts(context.Context, <-chan *storage.ObjectAttrs, chan<- *storage.ObjectAttrs) error
 	AddSuites(context.Context, junit.Suites, map[string]string)
 	AddMetadata(context.Context, *gcs.Started, *gcs.Finished) (ok bool, err error)
 	Finished(context.Context)
@@ -177,7 +177,7 @@ func ReadBuild(inputBuild Build, sum Summarizer) (Accumulator, error) {
 
 	// List artifacts to the artifacts channel
 	wg.Add(1)
-	artifacts := make(chan string) // Receives names of arifacts
+	artifacts := make(chan *storage.ObjectAttrs) // Receives objects
 	go func() {
 		defer wg.Done()
 		defer close(artifacts) // No more artifacts
@@ -194,7 +194,7 @@ func ReadBuild(inputBuild Build, sum Summarizer) (Accumulator, error) {
 	// Download each artifact, send row map to rc
 	// With parallelism: 60s without: 220s
 	wg.Add(1)
-	suiteArtifacts := make(chan string)
+	suiteArtifacts := make(chan *storage.ObjectAttrs)
 	go func() {
 		defer wg.Done()
 		defer close(suiteArtifacts)
@@ -329,13 +329,22 @@ func ReadBuilds(parent context.Context, group config.TestGroup, builds Builds, r
 						return
 					}
 					b := builds[i]
-					buildAcc, err := ReadBuild(b, sum)
+					var err error
+					var buildAcc Accumulator
+					for i := 2; i >= 0; i++ {
+						buildAcc, err = ReadBuild(b, sum)
+						if err == nil {
+							break
+						}
+						log.Printf("RETRY: Failed to read %s, retrying: %v", b, err)
+						time.Sleep(5 * time.Second)
+					}
 					if err != nil {
 						ec <- err
 						return
 					}
 					acc[i] = buildAcc
-					if lastUpdate := buildAcc.LastUpdate(); lastUpdate < finishedUnix {
+					if lastUpdate := buildAcc.LastUpdate(); lastUpdate < finishedUnix && lastUpdate != 0 {
 						select {
 						case <-ctx.Done():
 						case old <- i:

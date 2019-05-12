@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/golang/glog"
 
 	"github.com/openshift/ci-search/testgrid/config"
@@ -266,7 +267,7 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact, base s
 	return nil
 }
 
-func (a *LogAccumulator) downloadTailWhenFailure(ctx context.Context, artifact, base string, length int64) error {
+func (a *LogAccumulator) downloadTailWhenFailure(ctx context.Context, artifact *storage.ObjectAttrs, base string, length int64) error {
 	if _, ok := a.exists[base]; ok {
 		return nil
 	}
@@ -276,63 +277,49 @@ func (a *LogAccumulator) downloadTailWhenFailure(ctx context.Context, artifact, 
 		return nil
 	}
 
-	h := a.build.Bucket.Object(artifact)
-	r, err := h.NewReader(ctx)
+	h := a.build.Bucket.Object(artifact.Name)
+	start := artifact.Size - length
+	if start < 0 {
+		start = 0
+	}
+	r, err := h.NewRangeReader(ctx, start, length)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
 
-	bufs := [][]byte{make([]byte, length), make([]byte, length)}
-	mod := len(bufs)
-	counts := make([]int, mod)
-	lastMod := 0
-	for i := 0; ; i++ {
-		index := i % mod
-		n, err := r.Read(bufs[index])
-		counts[index] = n
-		if err != nil {
-			if err != io.EOF {
-				return err
-			}
-			lastMod = index
-			break
-		}
+	data, err := ioutil.ReadAll(r)
+	if err != nil {
+		return err
 	}
-	t := &fileTail{
-		base: base,
-		buf:  make([][]byte, 0, mod),
-	}
-	n := 0
-	for j := 0; j < mod; j++ {
-		index := j + lastMod + 1
-		t.buf = append(t.buf, bufs[index%mod][:counts[index%mod]])
-		n += counts[index%mod]
-	}
+
 	a.lock.Lock()
 	defer a.lock.Unlock()
 	if a.tails == nil {
 		a.tails = make(map[string]*fileTail)
 	}
-	a.tails[base] = t
+	a.tails[base] = &fileTail{
+		base: base,
+		buf:  [][]byte{data},
+	}
 	return nil
 }
 
-func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan string, unprocessedArtifacts chan<- string) error {
+func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan *storage.ObjectAttrs, unprocessedArtifacts chan<- *storage.ObjectAttrs) error {
 	var wg sync.WaitGroup
 	ec := make(chan error)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for art := range artifacts {
 		var rel string
-		if strings.HasPrefix(art, a.build.Prefix) {
-			rel = art[len(a.build.Prefix):]
+		if strings.HasPrefix(art.Name, a.build.Prefix) {
+			rel = art.Name[len(a.build.Prefix):]
 		}
 		switch {
 		case rel == "build-log.txt":
 
 			wg.Add(1)
-			go func(art string) {
+			go func(art *storage.ObjectAttrs) {
 				defer wg.Done()
 				if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
 					log.Printf("error: Unable to download %s: %v", art, err)
@@ -343,7 +330,7 @@ func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan string,
 				}
 			}(art)
 
-		case strings.HasSuffix(art, "e2e.log"):
+		case strings.HasSuffix(art.Name, "e2e.log"):
 			break
 
 			// TODO: enable later
@@ -357,7 +344,7 @@ func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan string,
 					case ec <- err:
 					}
 				}
-			}(art)
+			}(art.Name)
 
 		default:
 			unprocessedArtifacts <- art
