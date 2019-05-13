@@ -121,6 +121,9 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 
 func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
 	commandPath, commandArgs := gen.Command(index, search)
+	if commandArgs == nil { // no matching SearchPaths
+		return nil
+	}
 	pathPrefix := gen.PathPrefix()
 	cmd := &exec.Cmd{}
 	cmd.Path = commandPath

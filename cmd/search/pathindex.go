@@ -227,6 +227,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 		oldest = time.Now().Add(-index.MaxAge)
 	}
 
+	var grown bool
 	for _, path := range paths {
 		if index.Job != nil {
 			metadata, err := i.parseJobPath(path.path)
@@ -239,7 +240,13 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 		}
 		if all || path.index == index.SearchType {
 			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
+			grown = true
 		}
 	}
+
+	if !grown {
+		return nil
+	}
+
 	return initial
 }
