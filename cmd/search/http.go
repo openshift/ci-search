@@ -146,7 +146,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
 	stats := o.accessor.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em> <a href="/chart?%s">chart view</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, template.HTMLEscapeString(req.URL.RawQuery))
 	fmt.Fprintf(writer, "</div>")
 
 	fmt.Fprintf(writer, htmlPageEnd)

@@ -117,7 +117,8 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         width: 100%;
         height: 100%;
       }
-      #add-regexp {
+
+      div#overlay {
         display: block;
         position: absolute;
         z-index: 1000;
@@ -126,7 +127,10 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
   </head>
   <body>
     <script src="https://d3js.org/d3.v5.min.js"></script>
-    <button id="add-regexp">Add regexp</button>
+    <div id="overlay">
+      <button id="list-view">List view</button>
+      <button id="add-regexp">Add regexp</button>
+    </div>
     <script>
       var markRadius = 5;
       var markOpacity = 0.75;
@@ -472,12 +476,16 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       resize();
 
       d3.select('#add-regexp').on('click', () => {
-         var newRegexp = window.prompt('build log regexp', '');
-         if (newRegexp == null) {
-           return;
-         }
-         regexps.set(newRegexp, new Map());
-         search();
+        var newRegexp = window.prompt('build log regexp', '');
+        if (newRegexp == null) {
+          return;
+        }
+        regexps.set(newRegexp, new Map());
+        search();
+      });
+
+      d3.select('#list-view').on('click', () => {
+        window.location.assign('/' + window.location.search);
       });
 
       window.addEventListener('resize', resize);
