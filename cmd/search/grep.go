@@ -71,7 +71,7 @@ type grepGenerator struct {
 }
 
 func (g grepGenerator) Command(index *Index, search string) (string, []string) {
-	args := []string{g.execPath, "--color=never", "-R", "--null"}
+	args := []string{g.execPath, "--color=never", "-R", "--null", "-a"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
@@ -200,8 +200,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			// beginning of line, find the filename
 			filenameEnd := bytes.IndexByte(chunk, 0x00)
 			if filenameEnd < 1 {
-				glog.V(2).Infof("No filename on line, continuing")
-				return fmt.Errorf("grep returned an unexpected empty line")
+				return fmt.Errorf("grep returned an unexpected empty line: %q", string(chunk))
 			}
 			// initialize the filename
 			nextFilename = chunk[:filenameEnd+1]
