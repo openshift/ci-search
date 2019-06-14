@@ -32,6 +32,7 @@ func main() {
 		ListenAddr:   ":8080",
 		MaxAge:       14 * 24 * time.Hour,
 		JobURIPrefix: "https://openshift-gce-devel.appspot.com/build/",
+		DeckURI:      "https://prow.svc.ci.openshift.org",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
