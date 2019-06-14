@@ -33,6 +33,7 @@ func main() {
 		MaxAge:            14 * 24 * time.Hour,
 		JobURIPrefix:      "https://prow.svc.ci.openshift.org/view/gcs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
+		DeckURI:           "https://prow.svc.ci.openshift.org",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
