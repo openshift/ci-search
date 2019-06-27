@@ -32,7 +32,7 @@ type Result struct {
 	// FailedAt is the time when the job failed.
 	FailedAt time.Time
 
-	// JobURI is the job detail page, e.g. https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
+	// JobURI is the job detail page, e.g. https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
 	JobURI *url.URL
 
 	// FileType is the type of file where the match was found, e.g. "build-log" or "junit".

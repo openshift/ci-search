@@ -174,7 +174,7 @@ func (o *options) parseRequest(req *http.Request, mode string) (*Index, error) {
 		index.Search = append(index.Search, "error: Process interrupted with signal interrupt.*");
 		index.Search = append(index.Search, "pods .* already exists|pod .* was already deleted");
 		index.Search = append(index.Search, "could not wait for RPM repo server to deploy.*");
-		index.Search = append(index.Search, "could not start the process: fork/exec hack/tests/e2e-scaleupdown-previous.sh: no such file or directory");  // https://openshift-gce-devel.appspot.com/build/origin-ci-test/logs/periodic-ci-azure-e2e-scaleupdown-v4.2/5
+		index.Search = append(index.Search, "could not start the process: fork/exec hack/tests/e2e-scaleupdown-previous.sh: no such file or directory");  // https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/periodic-ci-azure-e2e-scaleupdown-v4.2/5
 		*/
 
 		// Installer and bootstrapping issues issues
