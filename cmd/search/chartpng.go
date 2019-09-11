@@ -73,7 +73,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	maxDuration := 0
 	scatters := make([]*scatter, len(index.Search)+3)
 	for _, job := range jobs {
-		if index.Job.FindStringIndex(job.Job) == nil {
+		if index.Job.FindStringIndex(job.Spec.Job) == nil {
 			continue
 		}
 
@@ -88,7 +88,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 		}
 
 		i := -1
-		matches, ok := result[job.URL]
+		matches, ok := result[job.Status.URL]
 		if ok {
 			for j, search := range index.Search {
 				if _, ok := matches[search]; ok {
@@ -98,7 +98,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if i < 0 {
-			switch job.State {
+			switch job.Status.State {
 			case "failure":
 				i = len(scatters) - 3
 			case "pending":

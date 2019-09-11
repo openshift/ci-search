@@ -142,7 +142,6 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         .attr('xmlns', 'http://www.w3.org/2000/svg')
         .attr('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
-      var timestampParse = d3.utcParse('%s');
       var isoParse = d3.utcParse('%Y-%m-%dT%H:%M:%S%Z');
       var isoFormat = d3.utcFormat('%Y-%m-%dT%H:%M:%SZ');
 
@@ -180,7 +179,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       function regexpMatches(job) {
         var matches = new Map();
         regexps.forEach((regexpMatches, regexp) => {
-          patternMatches = regexpMatches.get(job.url);
+          patternMatches = regexpMatches.get(job.status.url);
           if (patternMatches) {
             var matchArray = [];
             matches.set(regexp, matchArray);
@@ -191,7 +190,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       }
 
       function color(job) {
-        if (job.job && !job.job.match(filter)) {
+        if (job.spec && job.spec.job && !job.spec.job.match(filter)) {
           return;
         }
 
@@ -208,7 +207,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
             return matchedColor;
           }
         }
-        switch (job.state) {
+        switch (job.status.state) {
         case 'aborted':
           return;
         case 'success':
@@ -220,7 +219,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         case 'triggered':
           return;  // we don't care about these
         default:
-          console.log('unrecognized job state', job.state);
+          console.log('unrecognized job state', job.status.state);
         }
       }
 
@@ -281,7 +280,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         svg.selectAll('*').remove();
 
         if (data.length > 0) {
-          var now = Math.max(d3.max(data, job => job.started), d3.max(data, job => job._finished));
+          var now = Math.max(d3.max(data, job => job.started), d3.max(data, job => job.finished));
           var xMax = xScale.domain()[1];
           var yMax = yScale.domain()[1];
           svg.append('line')
@@ -297,7 +296,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
           .enter()
           .append('a')
             .classed('job', true)
-            .attr('xlink:href', job => job.url)
+            .attr('xlink:href', job => job.status.url)
           .append('circle')
             .attr('cx', job => xScale(job.started))
             .attr('cy', job => yScale(job.duration))
@@ -307,7 +306,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
             .attr('data-regexps', job => [...regexpMatches(job).keys()].join('||'))
           .append('title')
             .text(job => {
-              if (!job.url) {
+              if (!job.status.url) {
                 return JSON.stringify(job, null, 2);
               }
               var matches = regexpMatches(job);
@@ -318,7 +317,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
                 });
                 return matchStrings.join('\n');
               }
-              return job.state;
+              return job.status.state;
             });
 
         svg.append('g')
@@ -363,24 +362,24 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
           .style('text-anchor', 'middle')
           .text('duration (minutes)');
 
-        var totalFailures = data.filter(job => job.state === 'failure').length;
+        var totalFailures = data.filter(job => job.status.state === 'failure').length;
         var legend = [];
         [...regexps.keys()].forEach((regexp, i) => {
-          var matchCount = data.filter(job => regexps.get(regexp).get(job.url)).length;
+          var matchCount = data.filter(job => regexps.get(regexp).get(job.status.url)).length;
           legend.push({
             color: regexpColors[i],
             text: matchCount + ' (' + Math.round(matchCount / (totalFailures || 1) * 100)+ '% of all failures) ' + regexp,
           });
         });
-        var matchCount = data.filter(job => job.state === 'failure' && regexpMatches(job).size === 0).length;
+        var matchCount = data.filter(job => job.status.state === 'failure' && regexpMatches(job).size === 0).length;
         legend.push({
-          color: color({state: 'failure'}),
+          color: color({status: {state: 'failure'}}),
           text: matchCount + ' (' + Math.round(matchCount / (totalFailures || 1) * 100) + '% of all failures) other failures',
         });
         ['pending', 'success'].forEach(state => {
-          matchCount = data.filter(job => job.state === state).length;
+          matchCount = data.filter(job => job.status.state === state).length;
           legend.push({
-            color: color({state: state}),
+            color: color({status: {state: state}}),
             text: matchCount + ' (' + Math.round(matchCount / (data.length || 1) * 100) + '% of jobs) ' + state,
           });
         });
@@ -414,22 +413,26 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       function refetch(interval) {
         // Currently: Reason: CORS header ‘Access-Control-Allow-Origin’ missing
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS/Errors/CORSMissingAllowOrigin
-        //d3.json('https://prow.svc.ci.openshift.org/data.js')
+        //d3.json('https://prow.svc.ci.openshift.org/prowjobs.js')
         d3.json('jobs')
           .then(data => {
             var now = new Date()
-            data.forEach(job => {
-              job.started = timestampParse(job.started);
-              if (job.finished === '') {
-                job._finished = now;
-              }  else {
-                job._finished = isoParse(job.finished)
+            data.items.forEach(job => {
+              if (job.status.startTime === undefined) {
+                job.started = isoParse(job.metadata.creationTimestamp);
+              } else {
+                job.started = isoParse(job.status.startTime);
               }
-              job.duration = (job._finished - job.started) / 60000;  // minutes
+              if (job.status.completionTime === undefined) {
+                job.finished = now;
+              }  else {
+                job.finished = isoParse(job.status.completionTime);
+              }
+              job.duration = (job.finished - job.started) / 60000;  // minutes
             });
 
-            data.sort((a, b) => a.started - b.started);
-            jobs = data;
+            data.items.sort((a, b) => a.started - b.started);
+            jobs = data.items;
             search(interval);
           })
           .catch(alert);

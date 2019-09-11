@@ -44,7 +44,8 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 func getJobs() ([]ProwJob, error) {
 	jobLock.Lock()
 	defer jobLock.Unlock()
-	var jobs []ProwJob
+	var jobs ProwJobs
 	err := json.Unmarshal(jobBytes, &jobs)
-	return jobs, err
+	glog.Info(jobs.Items)
+	return jobs.Items, err
 }

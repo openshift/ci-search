@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,33 +19,49 @@ import (
 
 var uriNotFoundError = errors.New("URI not found")
 
+type ProwJobs struct {
+	Items []ProwJob `json:"items"`
+}
+
 type ProwJob struct {
+	Metadata Metadata `json:"metadata"`
+	Spec JobSpec `json:"spec"`
+	Status JobStatus `json:"status"`
+}
+
+type Metadata struct {
+}
+
+type JobSpec struct {
 	Type     string `json:"type"`
-	State    string `json:"state"`
-	URL      string `json:"url"`
-	Started  string `json:"started"`
-	Finished string `json:"finished"`
 	Job      string `json:"job"`
+}
+
+type JobStatus struct {
+	State    string `json:"state"`
+	StartTime string `json:"startTime"`
+	CompletionTime string `json:"completionTime"`
+	URL      string `json:"url"`
 	BuildID  string `json:"build_id"`
 }
 
 func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
 	var zero time.Time
 
-	started, err := strconv.ParseInt(job.Started, 10, 64)
+	started, err := time.Parse(time.RFC3339, job.Status.StartTime)
 	if err != nil {
-		return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'started': %s", job.Job, job.BuildID, err)
+		return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'startTime': %s", job.Spec.Job, job.Status.BuildID, err)
 	}
 
 	var finished time.Time
-	if job.Finished != "" {
-		finished, err = time.Parse(time.RFC3339, job.Finished)
+	if job.Status.CompletionTime != "" {
+		finished, err = time.Parse(time.RFC3339, job.Status.CompletionTime)
 		if err != nil {
-			return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'finished': %s", job.Job, job.BuildID, err)
+			return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'completionTime': %s", job.Spec.Job, job.Status.BuildID, err)
 		}
 	}
 
-	return time.Unix(started, 0).UTC(), finished, nil
+	return started, finished, nil
 }
 
 func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
@@ -55,9 +70,9 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return err
 	}
 
-	logPath := job.URL
+	logPath := job.Status.URL
 	if !strings.HasPrefix(logPath, jobURIPrefix.String()) {
-		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Job, job.BuildID, logPath)
+		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Spec.Job, job.Status.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, jobURIPrefix.String()), "build-log.txt")
 	if _, ok := indexedPaths.MetadataFor(logPath); ok {
@@ -72,7 +87,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 	if deckURI != nil {
 		uri := *deckURI
 		uri.Path = "/log"
-		query := url.Values{"id": []string{job.BuildID}, "job": []string{job.Job}}
+		query := url.Values{"id": []string{job.Status.BuildID}, "job": []string{job.Spec.Job}}
 		uri.RawQuery = query.Encode()
 		uris = append(uris, &uri)
 	}

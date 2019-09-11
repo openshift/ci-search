@@ -205,7 +205,7 @@ func (o *options) Run() error {
 					defer glog.V(4).Infof("Lister completed")
 					defer close(workCh)
 					dataURI := *deckURI
-					dataURI.Path = "/data.js"
+					dataURI.Path = "/prowjobs.js"
 					resp, err := client.Get(dataURI.String())
 					if err != nil {
 						glog.Errorf("Unable to index prow jobs from Deck: %v", err)
@@ -223,7 +223,7 @@ func (o *options) Run() error {
 						return
 					}
 
-					var jobs []ProwJob
+					var jobs ProwJobs
 					if err := json.Unmarshal(newBytes, &jobs); err != nil {
 						glog.Errorf("Unable to decode prow jobs from Deck: %v", err)
 						return
@@ -233,14 +233,14 @@ func (o *options) Run() error {
 					jobBytes = newBytes
 					jobLock.Unlock() // leaks on any panics, but we don't recover, so that's ok
 
-					glog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs))
-					for i := range jobs {
-						job := &jobs[i]
-						if job.State != "failure" {
+					glog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs.Items))
+					for i := range jobs.Items {
+						job := &jobs.Items[i]
+						if job.Status.State != "failure" {
 							continue
 						}
 						// jobs without a URL are unfetchable
-						if len(job.URL) == 0 {
+						if len(job.Status.URL) == 0 {
 							continue
 						}
 						workCh <- job
