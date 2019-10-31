@@ -29,6 +29,20 @@ test_groups:
 
 The search binary shells out to `rg` or `grep` (`rg` preferred for performance and better search options) and summarize the results it finds in modification order. Results are linked to the prow job result gubernator page.
 
+## Deploying in OpenShift
+
+Do deploy ci-search in a new OpenShift project, you can use:
+
+```console
+$ oc new-project ci-search
+$ oc new-app --name ci-search https://github.com/openshift/ci-search
+$ oc create route edge --service=ci-search
+$ oc get route -o jsonpath='{"https://"}{.status.ingress[0].host}{"/chart\n"}' ci-search
+https://ci-search-ci-search.svc.ci.openshift.org/chart
+```
+
+Obviously you can use the other URI paths besides `/chart` as well.
+
 ## Future additions
 
 * Improved visualization of results

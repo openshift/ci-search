@@ -9,7 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,14 +22,30 @@ type nopFlusher struct{}
 
 func (_ nopFlusher) Flush() {}
 
+type Match struct {
+	FileType  string   `json:"filename"`
+	Context   []string `json:"context,omitempty"`
+	MoreLines int      `json:"moreLines,omitempty"`
+}
+
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
+	o.ConfigPath = "README.md"
+	if o.ConfigPath == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	data, err := ioutil.ReadFile(o.ConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to read config: %v", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write(data)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+	if _, err = writer.Write(data); err != nil {
+		glog.Errorf("Failed to write response: %v", err)
+	}
 }
 
 func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
@@ -38,10 +54,14 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		flusher = nopFlusher{}
 	}
 
-	index, err := o.parseRequest(req)
+	index, err := o.parseRequest(req, "text")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
+	}
+
+	if len(index.Search) == 0 {
+		index.Search = []string{""}
 	}
 
 	contextOptions := []string{
@@ -88,67 +108,109 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
-	fmt.Fprintf(w, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(w, htmlIndexForm, template.HTMLEscapeString(index.Search), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI")
+	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
 
 	// display the empty results page
-	if len(index.Search) == 0 {
+	if len(index.Search[0]) == 0 {
 		stats := o.accessor.Stats()
-		fmt.Fprintf(w, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
-		fmt.Fprintf(w, htmlPageEnd)
+		fmt.Fprintf(writer, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
+		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
 
 	// perform a search
 	flusher.Flush()
-	fmt.Fprintf(w, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
+	fmt.Fprintf(writer, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
 
 	start := time.Now()
 
 	var count int
 	if index.Context >= 0 {
-		count, err = renderWithContext(req.Context(), w, index, o.generator, start, o.metadata)
+		count, err = renderWithContext(req.Context(), writer, index, o.generator, start, o.metadata)
 	} else {
-		count, err = renderSummary(req.Context(), w, index, o.generator, start, o.metadata)
+		count, err = renderSummary(req.Context(), writer, index, o.generator, start, o.metadata)
 	}
 
 	duration := time.Now().Sub(start)
-	if err != nil && err != io.EOF {
-		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search, count, duration, err)
-		fmt.Fprintf(w, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
-		fmt.Fprintf(w, htmlPageEnd)
+	if err != nil {
+		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
+		fmt.Fprintf(writer, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
+		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
-	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search, count, duration)
+	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
 	stats := o.accessor.Stats()
-	fmt.Fprintf(w, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries)
-	fmt.Fprintf(w, "</div>")
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em> <a href="/chart?%s">chart view</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, template.HTMLEscapeString(req.URL.RawQuery))
+	fmt.Fprintf(writer, "</div>")
 
-	fmt.Fprintf(w, htmlPageEnd)
+	fmt.Fprintf(writer, htmlPageEnd)
 }
 
-func (o *options) parseRequest(req *http.Request) (*Index, error) {
+func (o *options) parseRequest(req *http.Request, mode string) (*Index, error) {
 	if err := req.ParseForm(); err != nil {
 		return nil, err
 	}
 
-	index := &Index{
-		Context: 2,
-		MaxAge:  7 * 24 * time.Hour,
-	}
+	index := &Index{}
 
-	search := req.FormValue("search")
-	if len(search) > 0 {
-		index.Search = search
-	}
+	index.Search, _ = req.Form["search"]
+	if len(index.Search) == 0 && mode == "chart" {
+		// Basic source issues
+		//index.Search = append(index.Search, "CONFLICT .*Merge conflict in .*")
 
-	if context := req.FormValue("context"); len(context) > 0 {
-		num, err := strconv.Atoi(context)
-		if err != nil || num < -1 || num > 15 {
-			return nil, fmt.Errorf("context must be a number between -1 and 15")
-		}
-		index.Context = num
+		// CI-cluster issues
+		index.Search = append(index.Search, "could not create or restart template instance.*");
+		index.Search = append(index.Search, "could not (wait for|get) build.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1696483
+		/*
+		index.Search = append(index.Search, "could not copy .* imagestream.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703510
+		index.Search = append(index.Search, "error: image .*registry.svc.ci.openshift.org/.* does not exist");
+		index.Search = append(index.Search, "unable to find the .* image in the provided release image");
+		index.Search = append(index.Search, "error: Process interrupted with signal interrupt.*");
+		index.Search = append(index.Search, "pods .* already exists|pod .* was already deleted");
+		index.Search = append(index.Search, "could not wait for RPM repo server to deploy.*");
+		index.Search = append(index.Search, "could not start the process: fork/exec hack/tests/e2e-scaleupdown-previous.sh: no such file or directory");  // https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/periodic-ci-azure-e2e-scaleupdown-v4.2/5
+		*/
+
+		// Installer and bootstrapping issues issues
+		index.Search = append(index.Search, "level=error.*timeout while waiting for state.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
+		/*
+		index.Search = append(index.Search, "checking install permissions: error simulating policy: Throttling: Rate exceeded");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
+		index.Search = append(index.Search, "level=error.*Failed to reach target state.*");
+		index.Search = append(index.Search, "waiting for Kubernetes API: context deadline exceeded");
+		index.Search = append(index.Search, "failed to wait for bootstrapping to complete.*");
+		index.Search = append(index.Search, "failed to initialize the cluster.*");
+		*/
+		index.Search = append(index.Search, "Container setup exited with code ., reason Error");
+		//index.Search = append(index.Search, "Container setup in pod .* completed successfully");
+
+		// Cluster-under-test issues
+		index.Search = append(index.Search, "no providers available to validate pod");  // https://bugzilla.redhat.com/show_bug.cgi?id=1705102
+		index.Search = append(index.Search, "Error deleting EBS volume .* since volume is currently attached");  // https://bugzilla.redhat.com/show_bug.cgi?id=1704356
+		index.Search = append(index.Search, "clusteroperator/.* changed Degraded to True: .*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1702829 https://bugzilla.redhat.com/show_bug.cgi?id=1702832
+		index.Search = append(index.Search, "Cluster operator .* is still updating.*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700416
+		index.Search = append(index.Search, "Pod .* is not healthy"); // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700100
+		/*
+		index.Search = append(index.Search, "failed: .*oc new-app  should succeed with a --name of 58 characters");  // https://bugzilla.redhat.com/show_bug.cgi?id=1535099
+		index.Search = append(index.Search, "failed to get logs from .*an error on the server");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690168 closed as a dup of https://bugzilla.redhat.com/show_bug.cgi?id=1691055
+		index.Search = append(index.Search, "openshift-apiserver OpenShift API is not responding to GET requests");  // https://bugzilla.redhat.com/show_bug.cgi?id=1701291
+		index.Search = append(index.Search, "Cluster did not complete upgrade: timed out waiting for the condition");
+		index.Search = append(index.Search, "Cluster did not acknowledge request to upgrade in a reasonable time: timed out waiting for the condition");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703158 , also mentioned in https://bugzilla.redhat.com/show_bug.cgi?id=1701291#c1
+		index.Search = append(index.Search, "failed: .*Cluster upgrade should maintain a functioning cluster");
+		*/
+
+		// generic patterns so you can hover to see details in the tooltip
+		/*
+		index.Search = append(index.Search, "error.*");
+		index.Search = append(index.Search, "failed.*");
+		index.Search = append(index.Search, "fatal.*");
+		*/
+		index.Search = append(index.Search, "failed: \\(.*");
 	}
 
 	switch req.FormValue("type") {
@@ -162,6 +224,17 @@ func (o *options) parseRequest(req *http.Request) (*Index, error) {
 		return nil, fmt.Errorf("search must be 'junit', 'build-log', or 'all'")
 	}
 
+	if value := req.FormValue("name"); len(value) > 0 || mode == "chart" {
+		if len(value) == 0 {
+			value = "-e2e-"
+		}
+		var err error
+		index.Job, err = regexp.Compile(value)
+		if err != nil {
+			return nil, fmt.Errorf("name is an invalid regular expression: %v", err)
+		}
+	}
+
 	if value := req.FormValue("maxAge"); len(value) > 0 {
 		maxAge, err := time.ParseDuration(value)
 		if err != nil {
@@ -171,8 +244,25 @@ func (o *options) parseRequest(req *http.Request) (*Index, error) {
 		}
 		index.MaxAge = maxAge
 	}
-	if o.MaxAge > 0 && o.MaxAge < index.MaxAge {
-		index.MaxAge = o.MaxAge
+	maxAge := o.MaxAge
+	if maxAge == 0 {
+		maxAge = 7 * 24 * time.Hour
+	}
+	if mode == "chart" && maxAge > 24*time.Hour {
+		maxAge = 24 * time.Hour
+	}
+	if index.MaxAge == 0 || index.MaxAge > maxAge {
+		index.MaxAge = maxAge
+	}
+
+	if context := req.FormValue("context"); len(context) > 0 {
+		num, err := strconv.Atoi(context)
+		if err != nil || num < -1 || num > 15 {
+			return nil, fmt.Errorf("context must be a number between -1 and 15")
+		}
+		index.Context = num
+	} else if mode == "text" {
+		index.Context = 2
 	}
 
 	return index, nil
@@ -192,17 +282,16 @@ func durationSelected(current, expected time.Duration) string {
 	return ""
 }
 
-func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	lineCount := 0
 	var lastName string
 
 	bw := bufio.NewWriterSize(w, 256*1024)
-	err := executeGrep(ctx, generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
-		name = strings.Trim(name, "/")
 		if lastName == name {
 			fmt.Fprintf(bw, "\n&mdash;\n\n")
 		} else {
@@ -213,34 +302,14 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 			count++
 
 			var age string
-			result, ok := resultMeta.MetadataFor(name)
-			if ok {
+			result, _ := resultMeta.MetadataFor(name)
+			if !result.FailedAt.IsZero() {
 				duration := start.Sub(result.FailedAt)
 				age = " " + units.HumanDuration(duration)
 			}
 
 			fmt.Fprintf(bw, `<div class="mb-4">`)
-			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
-			last := len(parts) - 1
-			switch {
-			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
-				var filename string
-				if string(parts[last]) == "junit.failures" {
-					filename = "junit"
-				} else {
-					filename = string(parts[last])
-				}
-				prefix := string(bytes.Join(parts[:last], []byte("/")))
-				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from PR %s <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(string(parts[3])), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				} else {
-					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<h5 class="mb-3">%s from build <a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				}
-			default:
-				fmt.Fprintf(bw, `<h5 class="mb-3">%s%s</h5><pre class="small">`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-			}
+			fmt.Fprintf(bw, `<h5 class="mb-3">%s from %s <a href="%s">%s #%d</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.Trigger), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 		}
 
 		// remove empty leading and trailing lines
@@ -277,21 +346,32 @@ func renderWithContext(ctx context.Context, w http.ResponseWriter, index *Index,
 	return count, err
 }
 
-func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+func renderSummary(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
 	count := 0
 	currentLines := 0
 	var lastName string
 	bw := bufio.NewWriterSize(w, 256*1024)
 	fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
-	err := executeGrep(ctx, generator, index, 30, func(name string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if count == 5 || count%50 == 0 {
 			bw.Flush()
 		}
-		name = strings.Trim(name, "/")
 		if lastName == name {
 			// continue accumulating matches
 		} else {
 			lastName = name
+
+			var age string
+			result, _ := resultMeta.MetadataFor(name)
+			if !result.FailedAt.IsZero() {
+				duration := start.Sub(result.FailedAt)
+				age = units.HumanDuration(duration) + " ago"
+			}
+
+			if result.JobURI == nil {
+				glog.Errorf("no job URI for %q", name)
+				return
+			}
 
 			if count > 0 {
 				fmt.Fprintf(bw, "<td>%d</td>", currentLines)
@@ -300,35 +380,8 @@ func renderSummary(ctx context.Context, w http.ResponseWriter, index *Index, gen
 			}
 			count++
 
-			var age string
-			result, ok := resultMeta.MetadataFor(name)
-			if ok {
-				duration := start.Sub(result.FailedAt)
-				age = units.HumanDuration(duration) + " ago"
-			}
-
 			fmt.Fprintf(bw, `<tr>`)
-			parts := bytes.SplitN([]byte(name), []byte{filepath.Separator}, 8)
-			last := len(parts) - 1
-			switch {
-			case last > 2 && (bytes.Equal(parts[last], []byte("junit.failures")) || bytes.Equal(parts[last], []byte("build-log.txt"))):
-				var filename string
-				if string(parts[last]) == "junit.failures" {
-					filename = "junit"
-				} else {
-					filename = string(parts[last])
-				}
-				prefix := string(bytes.Join(parts[:last], []byte("/")))
-				if last > 3 && bytes.Equal(parts[2], []byte("pull")) {
-					name = fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				} else {
-					name := fmt.Sprintf("%s #%s", parts[last-2], parts[last-1])
-					fmt.Fprintf(bw, `<td>%s</td><td><a href="https://openshift-gce-devel.appspot.com/build/%s/">%s</a></td><td>%s</td>`, template.HTMLEscapeString(filename), template.HTMLEscapeString(prefix), template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-				}
-			default:
-				fmt.Fprintf(bw, `<td colspan="2">%s</td><td>%s</td>`, template.HTMLEscapeString(name), template.HTMLEscapeString(age))
-			}
+			fmt.Fprintf(bw, `<td>%s</td><td><a href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 		}
 
 		currentLines++
