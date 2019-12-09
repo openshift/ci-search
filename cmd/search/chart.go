@@ -195,7 +195,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         }
 
         var matches = regexpMatches(job);
-        if (matches.size > 0) {
+        if (matches.size > 0 && job.status.state == 'failure') {
           var matchedColor;
           [...regexps.keys()].some((regexp, i) => {
             if (matches.get(regexp)) {
