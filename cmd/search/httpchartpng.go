@@ -84,12 +84,14 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 		}
 
 		i := -1
-		matches, ok := result[job.Status.URL]
-		if ok {
-			for j, search := range index.Search {
-				if _, ok := matches[search]; ok {
-					i = j
-					break
+		if job.Status.State == "failure" {
+			matches, ok := result[job.Status.URL]
+			if ok {
+				for j, search := range index.Search {
+					if _, ok := matches[search]; ok {
+						i = j
+						break
+					}
 				}
 			}
 		}
