@@ -47,9 +47,9 @@ func getJobs() ([]ProwJob, error) {
 	var jobs ProwJobs
 	err := json.Unmarshal(jobBytes, &jobs)
 	if err == nil {
-		glog.Info("Loaded %d prow jobs", len(jobs.Items))
+		glog.Infof("Loaded %d prow jobs", len(jobs.Items))
 	} else {
-		glog.Info("Failed to load prow jobs: %v", err)
+		glog.Infof("Failed to load prow jobs: %v", err)
 	}
 	return jobs.Items, err
 }
