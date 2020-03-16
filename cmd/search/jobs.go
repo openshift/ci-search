@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 var jobLock sync.Mutex
@@ -37,7 +37,7 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	defer writer.Close()
 
 	if _, err := writer.Write(jobBytes); err != nil {
-		glog.Errorf("Failed to write response: %v", err)
+		klog.Errorf("Failed to write response: %v", err)
 	}
 }
 
@@ -47,9 +47,9 @@ func getJobs() ([]ProwJob, error) {
 	var jobs ProwJobs
 	err := json.Unmarshal(jobBytes, &jobs)
 	if err == nil {
-		glog.Info("Loaded %d prow jobs", len(jobs.Items))
+		klog.Infof("Loaded %d prow jobs", len(jobs.Items))
 	} else {
-		glog.Info("Failed to load prow jobs: %v", err)
+		klog.Infof("Failed to load prow jobs: %v", err)
 	}
 	return jobs.Items, err
 }

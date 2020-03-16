@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 type writeCloser interface {
@@ -38,7 +38,7 @@ func encodedWriter(w http.ResponseWriter, req *http.Request) writeCloser {
 	}
 
 	if encoding != "" {
-		glog.V(4).Infof("response encoding %s", encoding)
+		klog.V(4).Infof("response encoding %s", encoding)
 	}
 
 	if encoding == "gzip" {

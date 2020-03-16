@@ -18,6 +18,8 @@ package gcs
 
 import (
 	"testing"
+
+	"cloud.google.com/go/storage"
 )
 
 func TestParseSuitesMeta(t *testing.T) {
@@ -76,7 +78,8 @@ func TestParseSuitesMeta(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		actual := parseSuitesMeta(tc.input)
+
+		actual := parseSuitesMeta(&storage.ObjectAttrs{Name: tc.input})
 		switch {
 		case actual == nil && !tc.empty:
 			t.Errorf("%s: unexpected nil map", tc.name)

@@ -9,46 +9,24 @@ import (
 	"io/ioutil"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"syscall"
-	"time"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
-type Index struct {
-	Search []string
-
-	// Filtering the body of material being searched.
-
-	// Search excludes jobs whose Result.FileType does not match.
-	SearchType string
-
-	// Job excludes jobs whose Result.Name does not match.
-	Job *regexp.Regexp
-
-	// MaxAge excludes jobs which failed longer than MaxAge ago.
-	MaxAge time.Duration
-
-	// Output configuration.
-
-	// Context includes this many lines of context around each match.
-	Context int
-}
-
 type CommandGenerator interface {
-	Command(index *Index, search string) (cmd string, args []string)
+	Command(index *Index, search string) (cmd string, args []string, err error)
 	PathPrefix() string
 }
 
 type ripgrepGenerator struct {
 	execPath     string
 	searchPath   string
-	dynamicPaths PathAccessor
+	dynamicPaths PathSearcher
 }
 
-func (g ripgrepGenerator) Command(index *Index, search string) (string, []string) {
+func (g ripgrepGenerator) Command(index *Index, search string) (string, []string, error) {
 	args := []string{g.execPath, "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
@@ -56,8 +34,12 @@ func (g ripgrepGenerator) Command(index *Index, search string) (string, []string
 		args = append(args, "--context", "0")
 	}
 	args = append(args, search)
-	args = g.dynamicPaths.SearchPaths(index, args)
-	return g.execPath, args
+	var err error
+	args, err = g.dynamicPaths.SearchPaths(index, args)
+	if err != nil {
+		return "", nil, err
+	}
+	return g.execPath, args, nil
 }
 
 func (g ripgrepGenerator) PathPrefix() string {
@@ -67,10 +49,10 @@ func (g ripgrepGenerator) PathPrefix() string {
 type grepGenerator struct {
 	execPath     string
 	searchPath   string
-	dynamicPaths PathAccessor
+	dynamicPaths PathSearcher
 }
 
-func (g grepGenerator) Command(index *Index, search string) (string, []string) {
+func (g grepGenerator) Command(index *Index, search string) (string, []string, error) {
 	args := []string{g.execPath, "--color=never", "-R", "--null", "-a"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
@@ -78,21 +60,25 @@ func (g grepGenerator) Command(index *Index, search string) (string, []string) {
 		args = append(args, "--context", "0")
 	}
 	args = append(args, search)
-	args = g.dynamicPaths.SearchPaths(index, args)
-	return g.execPath, args
+	var err error
+	args, err = g.dynamicPaths.SearchPaths(index, args)
+	if err != nil {
+		return "", nil, err
+	}
+	return g.execPath, args, nil
 }
 
 func (g grepGenerator) PathPrefix() string {
 	return g.searchPath
 }
 
-func NewCommandGenerator(searchPath string, paths PathAccessor) (CommandGenerator, error) {
+func NewCommandGenerator(searchPath string, paths PathSearcher) (CommandGenerator, error) {
 	if path, err := exec.LookPath("rg"); err == nil {
-		glog.Infof("Using ripgrep at %s for searches", path)
+		klog.Infof("Using ripgrep at %s for searches", path)
 		return ripgrepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
 	}
 	if path, err := exec.LookPath("grep"); err == nil {
-		glog.Infof("Using grep at %s for searches", path)
+		klog.Infof("Using grep at %s for searches", path)
 		return grepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
 	}
 	return nil, fmt.Errorf("could not find 'rg' or 'grep' on the path")
@@ -120,10 +106,15 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 }
 
 func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
-	commandPath, commandArgs := gen.Command(index, search)
+	commandPath, commandArgs, err := gen.Command(index, search)
+	if err != nil {
+		return err
+	}
 	if commandArgs == nil { // no matching SearchPaths
 		return nil
 	}
+	klog.V(6).Infof("Executing query %s %v", commandPath, commandArgs)
+
 	pathPrefix := gen.PathPrefix()
 	cmd := &exec.Cmd{}
 	cmd.Path = commandPath
@@ -164,7 +155,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		}
 
 		hidden := (line) - len(result)
-		//glog.V(2).Infof("Captured %d lines for %s, %d not shown", line, path, hidden)
+		klog.V(7).Infof("Captured %d lines for %s, %d not shown", line, path, hidden)
 		matches++
 		fn(filepath.ToSlash(relPath), search, result, hidden)
 		return nil
@@ -173,17 +164,17 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 	defer func() {
 		n, err := io.Copy(ioutil.Discard, pr)
 		if n > 0 || (err != nil && err != io.EOF) {
-			glog.Errorf("Unread input %d: %v", n, err)
+			klog.Errorf("Unread input %d: %v", n, err)
 		}
-		glog.V(2).Infof("Waiting for command to finish after reading %d lines", linesRead)
+		klog.V(2).Infof("Waiting for command to finish after reading %d lines", linesRead)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && matches == 0 {
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
 					return
 				}
 			}
-			glog.Errorln(errOut.String())
-			glog.Errorf("Failed to wait for command: %v", err)
+			klog.Errorln(errOut.String())
+			klog.Errorf("Failed to wait for command: %v", err)
 		}
 	}()
 
@@ -244,7 +235,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 				chunk, isPrefix, err = br.ReadLine()
 				if err != nil {
 					if err := send(); err != nil {
-						glog.Errorf("Unable to send last search result: %v", err)
+						klog.Errorf("Unable to send last search result: %v", err)
 					}
 					return err
 				}
@@ -256,7 +247,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			chunk, isPrefix, err = br.ReadLine()
 			if err != nil {
 				if err := send(); err != nil {
-					glog.Errorf("Unable to send last search result: %v", err)
+					klog.Errorf("Unable to send last search result: %v", err)
 				}
 				return err
 			}

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 var colors = []color.Color{
@@ -41,7 +41,7 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	index, err := o.parseRequest(req, "chart")
+	index, err := parseRequest(req, "chart", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -50,12 +50,16 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 	counts := make(map[string]int, len(index.Search))
 	var lastJob string
 	err = executeGrep(req.Context(), o.generator, index, 1, func(name string, search string, matches []bytes.Buffer, moreLines int) {
-		metadata, _ := o.metadata.MetadataFor(name)
-		if metadata.JobURI == nil {
+		metadata, err := o.MetadataFor(name)
+		if err != nil {
+			klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
+			return
+		}
+		if metadata.URI == nil {
 			return
 		}
 
-		uri := metadata.JobURI.String()
+		uri := metadata.URI.String()
 		if uri != lastJob {
 			lastJob = uri
 			counts[search] += 1
@@ -86,7 +90,7 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 		"specialColors":  specialColors,
 	})
 	if err != nil {
-		glog.Errorf("Failed to execute chart template: %v", err)
+		klog.Errorf("Failed to execute chart template: %v", err)
 	}
 }
 

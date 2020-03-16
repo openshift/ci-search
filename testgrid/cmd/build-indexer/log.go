@@ -322,7 +322,7 @@ func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan *storag
 			go func(art *storage.ObjectAttrs) {
 				defer wg.Done()
 				if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
-					log.Printf("error: Unable to download %s: %v", art, err)
+					log.Printf("error: Unable to download %#v: %v", art, err)
 					select {
 					case <-ctx.Done():
 					case ec <- err:

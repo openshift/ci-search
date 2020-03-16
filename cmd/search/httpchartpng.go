@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 type scatter struct {
@@ -43,7 +43,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	index, err := o.parseRequest(req, "chart")
+	index, err := parseRequest(req, "chart", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -73,13 +73,9 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	maxDuration := 0
 	scatters := make([]*scatter, len(index.Search)+3)
 	for _, job := range jobs {
-		if index.Job.FindStringIndex(job.Spec.Job) == nil {
-			continue
-		}
-
 		start, stop, err := job.StartStop()
 		if err != nil {
-			glog.Error(err)
+			klog.Error(err)
 			continue
 		}
 
@@ -174,6 +170,6 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "image/png")
 	if err = png.Encode(w, img); err != nil {
-		glog.Errorf("Failed to write response: %v", err)
+		klog.Errorf("Failed to write response: %v", err)
 	}
 }
