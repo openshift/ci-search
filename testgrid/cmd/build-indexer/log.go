@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/testgrid/config"
 	"github.com/openshift/ci-search/testgrid/metadata/junit"
@@ -195,17 +195,17 @@ func (a *LogAccumulator) Finished(ctx context.Context) {
 	if !a.succeeded && a.failures == 0 {
 		for base, t := range a.tails {
 			if err := t.Write(a.path); err != nil {
-				glog.Errorf("Unable to write captured tail %s: %v", base, err)
+				klog.Errorf("Unable to write captured tail %s: %v", base, err)
 			}
 			if err := os.Chtimes(filepath.Join(a.path, base), at, at); err != nil && !os.IsNotExist(err) {
-				glog.Errorf("Unable to set modification time of %s to %d: %v", base, a.finished, err)
+				klog.Errorf("Unable to set modification time of %s to %d: %v", base, a.finished, err)
 			}
 		}
 	}
 
 	// update the timestamps of things we always write
 	if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
-		glog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
+		klog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
 	}
 	for _, file := range []string{"junit.failures"} {
 		_, ok := a.exists[file]
@@ -213,7 +213,7 @@ func (a *LogAccumulator) Finished(ctx context.Context) {
 			continue
 		}
 		if err := os.Chtimes(filepath.Join(a.path, file), at, at); err != nil && !os.IsNotExist(err) {
-			glog.Errorf("Unable to set modification time of %s to %d: %v", file, a.finished, err)
+			klog.Errorf("Unable to set modification time of %s to %d: %v", file, a.finished, err)
 		}
 	}
 }
