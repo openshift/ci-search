@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/glog"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog"
 )
 
 var uriNotFoundError = errors.New("URI not found")
@@ -24,25 +24,25 @@ type ProwJobs struct {
 }
 
 type ProwJob struct {
-	Metadata Metadata `json:"metadata"`
-	Spec JobSpec `json:"spec"`
-	Status JobStatus `json:"status"`
+	Metadata Metadata  `json:"metadata"`
+	Spec     JobSpec   `json:"spec"`
+	Status   JobStatus `json:"status"`
 }
 
 type Metadata struct {
 }
 
 type JobSpec struct {
-	Type     string `json:"type"`
-	Job      string `json:"job"`
+	Type string `json:"type"`
+	Job  string `json:"job"`
 }
 
 type JobStatus struct {
-	State    string `json:"state"`
-	StartTime string `json:"startTime"`
+	State          string `json:"state"`
+	StartTime      string `json:"startTime"`
 	CompletionTime string `json:"completionTime"`
-	URL      string `json:"url"`
-	BuildID  string `json:"build_id"`
+	URL            string `json:"url"`
+	BuildID        string `json:"build_id"`
 }
 
 func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
@@ -64,7 +64,7 @@ func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
 	return started, finished, nil
 }
 
-func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
+func fetchJob(client *http.Client, job *ProwJob, resolver PathResolver, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
 	_, stop, err := job.StartStop()
 	if err != nil {
 		return err
@@ -75,7 +75,9 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Spec.Job, job.Status.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, jobURIPrefix.String()), "build-log.txt")
-	if _, ok := indexedPaths.MetadataFor(logPath); ok {
+	internalPath := "builds/" + logPath
+	if _, err := resolver.MetadataFor(internalPath); err != nil {
+		klog.Errorf("unable to resolve metadata for: %s: %v", internalPath, err)
 		return nil
 	}
 
@@ -110,7 +112,7 @@ func fetchJob(client *http.Client, job *ProwJob, indexedPaths *pathIndex, toDir 
 }
 
 func fetchArtifact(client *http.Client, uri *url.URL, path string, date time.Time) error {
-	defer glog.V(4).Infof("Fetch %s to %s", uri, path)
+	defer klog.V(4).Infof("Fetch %s to %s", uri, path)
 	resp, err := client.Get(uri.String())
 	if err != nil {
 		return fmt.Errorf("unable to fetch artifact: %v", err)

@@ -9,13 +9,13 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	units "github.com/docker/go-units"
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 type nopFlusher struct{}
@@ -44,7 +44,7 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 	if _, err = writer.Write(data); err != nil {
-		glog.Errorf("Failed to write response: %v", err)
+		klog.Errorf("Failed to write response: %v", err)
 	}
 }
 
@@ -54,7 +54,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		flusher = nopFlusher{}
 	}
 
-	index, err := o.parseRequest(req, "text")
+	index, err := parseRequest(req, "text", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -83,7 +83,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var searchTypeOptions []string
-	for _, searchType := range []string{"junit", "build-log", "all"} {
+	for _, searchType := range []string{"bug+junit", "bug", "junit", "build-log", "all"} {
 		var selected string
 		if searchType == index.SearchType {
 			selected = "selected"
@@ -92,15 +92,15 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	maxAgeOptions := []string{
-		fmt.Sprintf(`<option value="6h" %s>6h</option>`, durationSelected(6*time.Hour, index.MaxAge)),
-		fmt.Sprintf(`<option value="12h" %s>12h</option>`, durationSelected(12*time.Hour, index.MaxAge)),
-		fmt.Sprintf(`<option value="24h" %s>1d</option>`, durationSelected(24*time.Hour, index.MaxAge)),
-		fmt.Sprintf(`<option value="48h" %s>2d</option>`, durationSelected(48*time.Hour, index.MaxAge)),
-		fmt.Sprintf(`<option value="168h" %s>7d</option>`, durationSelected(168*time.Hour, index.MaxAge)),
-		fmt.Sprintf(`<option value="336h" %s>14d</option>`, durationSelected(336*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>6h</option>`, 6, durationSelected(6*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>12h</option>`, 12, durationSelected(12*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>1d</option>`, 24, durationSelected(24*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>2d</option>`, 2*24, durationSelected(2*24*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>7d</option>`, 7*24, durationSelected(7*24*time.Hour, index.MaxAge)),
+		fmt.Sprintf(`<option value="%dh" %s>14d</option>`, 14*24, durationSelected(14*24*time.Hour, index.MaxAge)),
 	}
 	switch index.MaxAge {
-	case 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 48 * time.Hour, 168 * time.Hour, 336 * time.Hour:
+	case 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 2 * 24 * time.Hour, 7 * 24 * time.Hour, 14 * 24 * time.Hour:
 	case 0:
 		maxAgeOptions = append(maxAgeOptions, `<option value="0" selected>No limit</option>`)
 	default:
@@ -117,8 +117,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
-		stats := o.accessor.Stats()
-		fmt.Fprintf(writer, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries)
+		stats := o.Stats()
+		fmt.Fprintf(writer, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
@@ -131,141 +131,28 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	var count int
 	if index.Context >= 0 {
-		count, err = renderWithContext(req.Context(), writer, index, o.generator, start, o.metadata)
+		count, err = renderWithContext(req.Context(), writer, index, o.generator, start, o)
 	} else {
-		count, err = renderSummary(req.Context(), writer, index, o.generator, start, o.metadata)
+		count, err = renderSummary(req.Context(), writer, index, o.generator, start, o)
 	}
 
 	duration := time.Now().Sub(start)
 	if err != nil {
-		glog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
-		fmt.Fprintf(writer, `<p class="alert alert-danger>%s</p>"`, template.HTMLEscapeString(err.Error()))
+		klog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
+		fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
-	glog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
+	klog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
-	stats := o.accessor.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d entries)</em> <a href="/chart?%s">chart view</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, template.HTMLEscapeString(req.URL.RawQuery))
+	stats := o.Stats()
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
+	if count == 0 {
+		fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
+	}
 	fmt.Fprintf(writer, "</div>")
 
 	fmt.Fprintf(writer, htmlPageEnd)
-}
-
-func (o *options) parseRequest(req *http.Request, mode string) (*Index, error) {
-	if err := req.ParseForm(); err != nil {
-		return nil, err
-	}
-
-	index := &Index{}
-
-	index.Search, _ = req.Form["search"]
-	if len(index.Search) == 0 && mode == "chart" {
-		// Basic source issues
-		//index.Search = append(index.Search, "CONFLICT .*Merge conflict in .*")
-
-		// CI-cluster issues
-		index.Search = append(index.Search, "could not create or restart template instance.*");
-		index.Search = append(index.Search, "could not (wait for|get) build.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1696483
-		/*
-		index.Search = append(index.Search, "could not copy .* imagestream.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703510
-		index.Search = append(index.Search, "error: image .*registry.svc.ci.openshift.org/.* does not exist");
-		index.Search = append(index.Search, "unable to find the .* image in the provided release image");
-		index.Search = append(index.Search, "error: Process interrupted with signal interrupt.*");
-		index.Search = append(index.Search, "pods .* already exists|pod .* was already deleted");
-		index.Search = append(index.Search, "could not wait for RPM repo server to deploy.*");
-		index.Search = append(index.Search, "could not start the process: fork/exec hack/tests/e2e-scaleupdown-previous.sh: no such file or directory");  // https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/periodic-ci-azure-e2e-scaleupdown-v4.2/5
-		*/
-
-		// Installer and bootstrapping issues issues
-		index.Search = append(index.Search, "level=error.*timeout while waiting for state.*");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
-		/*
-		index.Search = append(index.Search, "checking install permissions: error simulating policy: Throttling: Rate exceeded");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690069 https://bugzilla.redhat.com/show_bug.cgi?id=1691516
-		index.Search = append(index.Search, "level=error.*Failed to reach target state.*");
-		index.Search = append(index.Search, "waiting for Kubernetes API: context deadline exceeded");
-		index.Search = append(index.Search, "failed to wait for bootstrapping to complete.*");
-		index.Search = append(index.Search, "failed to initialize the cluster.*");
-		*/
-		index.Search = append(index.Search, "Container setup exited with code ., reason Error");
-		//index.Search = append(index.Search, "Container setup in pod .* completed successfully");
-
-		// Cluster-under-test issues
-		index.Search = append(index.Search, "no providers available to validate pod");  // https://bugzilla.redhat.com/show_bug.cgi?id=1705102
-		index.Search = append(index.Search, "Error deleting EBS volume .* since volume is currently attached");  // https://bugzilla.redhat.com/show_bug.cgi?id=1704356
-		index.Search = append(index.Search, "clusteroperator/.* changed Degraded to True: .*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1702829 https://bugzilla.redhat.com/show_bug.cgi?id=1702832
-		index.Search = append(index.Search, "Cluster operator .* is still updating.*");  // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700416
-		index.Search = append(index.Search, "Pod .* is not healthy"); // e.g. https://bugzilla.redhat.com/show_bug.cgi?id=1700100
-		/*
-		index.Search = append(index.Search, "failed: .*oc new-app  should succeed with a --name of 58 characters");  // https://bugzilla.redhat.com/show_bug.cgi?id=1535099
-		index.Search = append(index.Search, "failed to get logs from .*an error on the server");  // https://bugzilla.redhat.com/show_bug.cgi?id=1690168 closed as a dup of https://bugzilla.redhat.com/show_bug.cgi?id=1691055
-		index.Search = append(index.Search, "openshift-apiserver OpenShift API is not responding to GET requests");  // https://bugzilla.redhat.com/show_bug.cgi?id=1701291
-		index.Search = append(index.Search, "Cluster did not complete upgrade: timed out waiting for the condition");
-		index.Search = append(index.Search, "Cluster did not acknowledge request to upgrade in a reasonable time: timed out waiting for the condition");  // https://bugzilla.redhat.com/show_bug.cgi?id=1703158 , also mentioned in https://bugzilla.redhat.com/show_bug.cgi?id=1701291#c1
-		index.Search = append(index.Search, "failed: .*Cluster upgrade should maintain a functioning cluster");
-		*/
-
-		// generic patterns so you can hover to see details in the tooltip
-		/*
-		index.Search = append(index.Search, "error.*");
-		index.Search = append(index.Search, "failed.*");
-		index.Search = append(index.Search, "fatal.*");
-		*/
-		index.Search = append(index.Search, "failed: \\(.*");
-	}
-
-	switch req.FormValue("type") {
-	case "junit":
-		index.SearchType = "junit"
-	case "build-log":
-		index.SearchType = "build-log"
-	case "all", "":
-		index.SearchType = "all"
-	default:
-		return nil, fmt.Errorf("search must be 'junit', 'build-log', or 'all'")
-	}
-
-	if value := req.FormValue("name"); len(value) > 0 || mode == "chart" {
-		if len(value) == 0 {
-			value = "-e2e-"
-		}
-		var err error
-		index.Job, err = regexp.Compile(value)
-		if err != nil {
-			return nil, fmt.Errorf("name is an invalid regular expression: %v", err)
-		}
-	}
-
-	if value := req.FormValue("maxAge"); len(value) > 0 {
-		maxAge, err := time.ParseDuration(value)
-		if err != nil {
-			return nil, fmt.Errorf("maxAge is an invalid duration: %v", err)
-		} else if maxAge < 0 {
-			return nil, fmt.Errorf("maxAge must be non-negative: %v", err)
-		}
-		index.MaxAge = maxAge
-	}
-	maxAge := o.MaxAge
-	if maxAge == 0 {
-		maxAge = 7 * 24 * time.Hour
-	}
-	if mode == "chart" && maxAge > 24*time.Hour {
-		maxAge = 24 * time.Hour
-	}
-	if index.MaxAge == 0 || index.MaxAge > maxAge {
-		index.MaxAge = maxAge
-	}
-
-	if context := req.FormValue("context"); len(context) > 0 {
-		num, err := strconv.Atoi(context)
-		if err != nil || num < -1 || num > 15 {
-			return nil, fmt.Errorf("context must be a number between -1 and 15")
-		}
-		index.Context = num
-	} else if mode == "text" {
-		index.Context = 2
-	}
-
-	return index, nil
 }
 
 func intSelected(current, expected int) string {
@@ -282,34 +169,130 @@ func durationSelected(current, expected time.Duration) string {
 	return ""
 }
 
-func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+type sortableEntry struct {
+	index int64
+	data  []byte
+}
+
+type sortableEntries []sortableEntry
+
+func (e sortableEntries) Less(i, j int) bool { return e[i].index <= e[j].index }
+func (e sortableEntries) Swap(i, j int)      { e[i], e[j] = e[j], e[i] }
+func (e sortableEntries) Len() int           { return len(e) }
+
+type sortableWriter struct {
+	bw *bufio.Writer
+
+	sizeLimit int
+	entries   sortableEntries
+
+	buf   *bytes.Buffer
+	index int64
+}
+
+func (w *sortableWriter) push() {
+	data := w.buf.Bytes()
+	copied := make([]byte, len(data))
+	copy(copied, data)
+	w.sizeLimit -= len(copied)
+	w.entries = append(w.entries, sortableEntry{index: w.index, data: copied})
+	w.buf.Reset()
+}
+
+func (w *sortableWriter) SetIndex(index int64) {
+	if w.sizeLimit <= 0 {
+		return
+	}
+	if w.buf == nil {
+		w.index = index
+		w.buf = bytes.NewBuffer(make([]byte, 0, 2048))
+		return
+	}
+
+	// copy the current buffer to the array
+	w.push()
+	w.index = index
+
+	if w.sizeLimit <= 0 {
+		klog.Infof("DEBUG: results larger than window, flushing from now on")
+		w.buf = nil
+		w.Flush()
+	}
+}
+
+func (w *sortableWriter) Flush() error {
+	if w.buf != nil {
+		w.push()
+		w.buf = nil
+	}
+	if len(w.entries) > 0 {
+		sort.Sort(w.entries)
+		for _, entry := range w.entries {
+			if _, err := w.bw.Write(entry.data); err != nil {
+				return err
+			}
+		}
+		w.entries = w.entries[:]
+	}
+	return w.bw.Flush()
+}
+
+func (w *sortableWriter) Write(buf []byte) (int, error) {
+	if w.buf != nil {
+		return w.buf.Write(buf)
+	}
+	return w.bw.Write(buf)
+}
+
+func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
 	count := 0
 	lineCount := 0
-	var lastName string
 
-	bw := bufio.NewWriterSize(w, 256*1024)
+	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
+	var lastName string
+	drop := true
 	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
-		if count == 5 || count%50 == 0 {
-			bw.Flush()
-		}
 		if lastName == name {
+			if drop {
+				return
+			}
 			fmt.Fprintf(bw, "\n&mdash;\n\n")
 		} else {
+			// finish the last result
 			lastName = name
-			if count > 0 {
+			if !drop {
 				fmt.Fprintf(bw, `</pre></div>`)
 			}
-			count++
+			drop = false
 
+			// decide whether to print the next result
+			result, err := resolver.MetadataFor(name)
+			if err != nil {
+				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
+				drop = true
+				return
+			}
 			var age string
-			result, _ := resultMeta.MetadataFor(name)
-			if !result.FailedAt.IsZero() {
-				duration := start.Sub(result.FailedAt)
+			if !result.LastModified.IsZero() {
+				duration := start.Sub(result.LastModified)
+				if !result.IgnoreAge && duration > index.MaxAge {
+					klog.V(5).Infof("Filtered %s, older than query limit", name)
+					drop = true
+					return
+				}
 				age = " " + units.HumanDuration(duration)
 			}
 
+			// output the result
+			count++
+			bw.SetIndex(-result.LastModified.Unix())
 			fmt.Fprintf(bw, `<div class="mb-4">`)
-			fmt.Fprintf(bw, `<h5 class="mb-3">%s from %s <a href="%s">%s #%d</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.Trigger), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+			switch result.FileType {
+			case "bug":
+				fmt.Fprintf(bw, `<h5 class="mb-3"><a target="_blank" href="%s">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.URI.String()), result.Name, template.HTMLEscapeString(age))
+			default:
+				fmt.Fprintf(bw, `<h5 class="mb-3">%s from %s <a target="_blank" href="%s">%s #%d</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.Trigger), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+			}
 		}
 
 		// remove empty leading and trailing lines
@@ -341,59 +324,76 @@ func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator
 		fmt.Fprintf(bw, `</pre></div>`)
 	}
 	if err := bw.Flush(); err != nil {
-		glog.Errorf("Unable to flush results buffer: %v", err)
+		klog.Errorf("Unable to flush results buffer: %v", err)
 	}
 	return count, err
 }
 
-func renderSummary(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resultMeta ResultMetadata) (int, error) {
+func renderSummary(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
 	count := 0
 	currentLines := 0
+
+	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
-	bw := bufio.NewWriterSize(w, 256*1024)
-	fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
+	drop := true
 	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
-		if count == 5 || count%50 == 0 {
-			bw.Flush()
-		}
 		if lastName == name {
 			// continue accumulating matches
 		} else {
+			// finish the last result
 			lastName = name
+			if !drop {
+				fmt.Fprintf(bw, "<td>%d</td></tr>\n", currentLines)
+			}
+			drop = false
+			currentLines = 0
 
+			// decide whether to print the next result
+			result, err := resolver.MetadataFor(name)
+			if err != nil {
+				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
+				drop = true
+				return
+			}
+			if result.URI == nil {
+				klog.Errorf("no job URI for %q", name)
+				drop = true
+				return
+			}
 			var age string
-			result, _ := resultMeta.MetadataFor(name)
-			if !result.FailedAt.IsZero() {
-				duration := start.Sub(result.FailedAt)
+			if !result.LastModified.IsZero() {
+				duration := start.Sub(result.LastModified)
+				if !result.IgnoreAge && duration > index.MaxAge {
+					klog.V(5).Infof("Filtered %s, older than query limit", name)
+					drop = true
+					return
+				}
 				age = units.HumanDuration(duration) + " ago"
 			}
 
-			if result.JobURI == nil {
-				glog.Errorf("no job URI for %q", name)
-				return
-			}
-
-			if count > 0 {
-				fmt.Fprintf(bw, "<td>%d</td>", currentLines)
-				fmt.Fprintf(bw, `</tr>`)
-				currentLines = 0
-			}
 			count++
-
-			fmt.Fprintf(bw, `<tr>`)
-			fmt.Fprintf(bw, `<td>%s</td><td><a href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.JobURI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+			if count == 1 {
+				fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`+"\n")
+			}
+			bw.SetIndex(-result.LastModified.Unix())
+			switch result.FileType {
+			case "bug":
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
+			default:
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+			}
 		}
 
 		currentLines++
 	})
 
 	if count > 0 {
-		fmt.Fprintf(bw, "<td>%d</td>", currentLines)
-		fmt.Fprintf(bw, `</tr>`)
+		fmt.Fprintf(bw, "<td>%d</td></tr>\n", currentLines)
 	}
 	if err := bw.Flush(); err != nil {
-		glog.Errorf("Unable to flush results buffer: %v", err)
+		klog.Errorf("Unable to flush results buffer: %v", err)
 	}
+	fmt.Fprintf(w, "</table>\n")
 	return count, err
 }
 
@@ -430,16 +430,17 @@ const htmlIndexForm = `
 
 const htmlEmptyPage = `
 <div class="ml-3" style="margin-top: 3rem; color: #666;">
-<p>Find JUnit test failures from <a href="/config">a subset of CI jobs</a> in <a href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
-<p>The search input will use <a href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a>.</p>
+<p>Find bugs and test failures from <a href="/config">CI jobs</a> in <a target="_blank" href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
+<p>The search input will use <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a>.</p>
 <p>Searches are case-insensitive (using ripgrep "smart casing")</p>
 <p>Examples:
 <ul>
 <li><code>timeout</code> - all JUnit failures with 'timeout' in the result</li>
 <li><code>status code \d{3}\s</code> - all failures that contain 'status code' followed by a 3 digit number</li>
+<li><code>(?m)text on one line .* and text on another line</code> - search for text across multiple lines</li>
 </ul>
 <p>You can alter the age of results to search with the dropdown next to the search bar. Note that older results are pruned and may not be available after 14 days.</p>
 <p>The amount of surrounding text returned with each match can be changed, including none.
-<p>Currently indexing %s across %d entries</p>
+<p>Currently indexing %s across %d results and %d bugs</p>
 </div>
 `

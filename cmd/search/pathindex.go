@@ -5,22 +5,29 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
-type PathAccessor interface {
+type PathSearcher interface {
 	// SearchPaths searches for paths matching the index's SearchType
 	// and MaxAge, and returns them as a slice of filesystem paths.
-	SearchPaths(*Index, []string) []string
+	SearchPaths(*Index, []string) ([]string, error)
+}
 
+type PathAccessor interface {
 	// Stats returns aggregate statistics for the indexed paths.
 	Stats() PathIndexStats
+
+	// LastModified returns the time the requested path reported a failure at
+	// or the zero time.
+	LastModified(path string) time.Time
 }
 
 type PathIndexStats struct {
@@ -28,30 +35,10 @@ type PathIndexStats struct {
 	Size    int64
 }
 
-type Result struct {
-	// FailedAt is the time when the job failed.
-	FailedAt time.Time
-
-	// JobURI is the job detail page, e.g. https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
-	JobURI *url.URL
-
-	// FileType is the type of file where the match was found, e.g. "build-log" or "junit".
-	FileType string
-
-	// Trigger is "pull" or "build".
-	Trigger string
-
-	// Name is the name of the job, e.g. release-openshift-ocp-installer-e2e-aws-4.1 or pull-ci-openshift-origin-master-e2e-aws.
-	Name string
-
-	// Number is the job number, e.g. 309 for origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for origin-ci-test/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.
-	Number int
-}
-
-type ResultMetadata interface {
+type PathResolver interface {
 	// MetadataFor returns metadata for the slash-separated path
 	// resolved relative to the index base.
-	MetadataFor(path string) (*Result, bool)
+	MetadataFor(path string) (*Result, error)
 }
 
 type pathIndex struct {
@@ -72,12 +59,12 @@ type pathAge struct {
 }
 
 func (index *pathIndex) parseJobPath(path string) (*Result, error) {
-	result := &Result{}
+	var result Result
 
 	parts := strings.SplitN(path, "/", 8)
 	last := len(parts) - 1
 
-	result.JobURI = index.baseURI.ResolveReference(&url.URL{Path: strings.Join(parts[:last], "/")})
+	result.URI = index.baseURI.ResolveReference(&url.URL{Path: strings.Join(parts[:last], "/")})
 
 	switch parts[last] {
 	case "build-log.txt":
@@ -91,11 +78,11 @@ func (index *pathIndex) parseJobPath(path string) (*Result, error) {
 	var err error
 	result.Number, err = strconv.Atoi(parts[last-1])
 	if err != nil {
-		return result, err
+		return nil, err
 	}
 
 	if last < 3 {
-		return result, fmt.Errorf("not enough parts (%d < 3)", last)
+		return nil, fmt.Errorf("not enough parts (%d < 3)", last)
 	}
 	result.Name = parts[last-2]
 
@@ -108,27 +95,16 @@ func (index *pathIndex) parseJobPath(path string) (*Result, error) {
 		result.Trigger = parts[1]
 	}
 
-	return result, nil
+	return &result, nil
 }
 
-func (index *pathIndex) MetadataFor(path string) (*Result, bool) {
-	result, err := index.parseJobPath(path)
-	if err != nil {
-		glog.Errorf("Failed to parse job path for %q: %v", path, err)
-		return result, false
-	}
-
+func (index *pathIndex) LastModified(path string) time.Time {
 	index.lock.Lock()
-	position, ok := index.pathIndex[path]
-	if ok {
-		result.FailedAt = index.ordered[position].age
+	defer index.lock.Unlock()
+	if position, ok := index.pathIndex[path]; ok {
+		return index.ordered[position].age
 	}
-	index.lock.Unlock()
-	if !ok {
-		return result, false
-	}
-
-	return result, true
+	return time.Time{}
 }
 
 func (index *pathIndex) Load() error {
@@ -137,7 +113,7 @@ func (index *pathIndex) Load() error {
 	var err error
 	start := time.Now()
 	defer func() {
-		glog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(ordered), err)
+		klog.Infof("Refreshed path index in %s, loaded %d: %v", time.Now().Sub(start).Truncate(time.Millisecond), len(ordered), err)
 	}()
 
 	mustExpire := index.maxAge != 0
@@ -202,7 +178,16 @@ func (i *pathIndex) Stats() PathIndexStats {
 	return i.stats
 }
 
-func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
+func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error) {
+	var reJob *regexp.Regexp
+	if index.Job != nil {
+		re, err := regexp.Compile(fmt.Sprintf("%s.*%s.*%s", string(filepath.Separator), index.Job.String(), string(filepath.Separator)))
+		if err != nil {
+			return nil, fmt.Errorf("unable to build search path regexp: %v", err)
+		}
+		reJob = re
+	}
+
 	var paths []pathAge
 	i.lock.Lock()
 	paths = i.ordered
@@ -210,7 +195,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 
 	// search all if we haven't built an index yet
 	if len(paths) == 0 {
-		return append(initial, i.base)
+		return append(initial, i.base), nil
 	}
 
 	// grow the map to the desired size up front
@@ -220,7 +205,11 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 		initial = copied
 	}
 
-	all := len(index.SearchType) == 0 || index.SearchType == "all"
+	searchType := index.SearchType
+	all := len(searchType) == 0 || searchType == "all"
+	if searchType == "bug+junit" {
+		searchType = "junit"
+	}
 
 	var oldest time.Time
 	if index.MaxAge > 0 {
@@ -229,24 +218,21 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) []string {
 
 	var grown bool
 	for _, path := range paths {
-		if index.Job != nil {
-			metadata, err := i.parseJobPath(path.path)
-			if err == nil && index.Job.FindStringIndex(metadata.Name) == nil {
-				continue
-			}
-		}
 		if path.age.Before(oldest) {
 			break
 		}
-		if all || path.index == index.SearchType {
+		if all || path.index == searchType {
+			if reJob != nil && !reJob.MatchString(path.path) {
+				continue
+			}
 			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
 			grown = true
 		}
 	}
 
 	if !grown {
-		return nil
+		return nil, fmt.Errorf("no entries")
 	}
 
-	return initial
+	return initial, nil
 }
