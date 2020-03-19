@@ -125,7 +125,7 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 	case "all":
 		index.SearchType = "all"
 	default:
-		return nil, fmt.Errorf("search must be 'bug', 'junit', 'build-log', or 'all'")
+		return nil, fmt.Errorf("search type must be 'bug', 'junit', 'build-log', or 'all'")
 	}
 
 	if value := req.FormValue("name"); len(value) > 0 || mode == "chart" {
