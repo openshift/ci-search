@@ -46,7 +46,7 @@ func NewCommentStore(client *Client, refreshInterval time.Duration, includePriva
 		queue: workqueue.NewNamed("comment_store"),
 
 		refreshInterval: refreshInterval,
-		rateLimit:       rate.NewLimiter(rate.Every(refreshInterval/3), 3),
+		rateLimit:       rate.NewLimiter(rate.Every(refreshInterval/12), 3),
 		maxBatch:        100,
 	}
 	return s
