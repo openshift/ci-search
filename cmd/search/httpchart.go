@@ -157,6 +157,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
 
       var filter = '{{.index.Job}}';
       var dateRange = {{.index.MaxAge.Seconds}};  // in seconds
+      var searchType = '{{.index.SearchType}}';
 
       // {
       //   "regexp-pattern": {
@@ -461,6 +462,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
         searchParams.append('name', filter);
         searchParams.append('maxAge', dateRange + 's');  // chart is by start, but maxAge is by finish, so no need to expand this to handle drifting relative times.
         searchParams.append('context', 0);
+        searchParams.append('type', searchType);
         regexps.forEach((_, regexp) => {
           searchParams.append('search', regexp);
         });
