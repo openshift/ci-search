@@ -38,6 +38,7 @@ func NewCommentDiskStore(path string, maxAge time.Duration) *CommentDiskStore {
 }
 
 func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store CommentAccessor) {
+	defer klog.V(2).Infof("Comment disk worker exited")
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
 		for {
 			obj, done := s.queue.Get()
@@ -56,8 +57,8 @@ func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store Com
 			}
 			bug, err := lister.Get(id)
 			if err != nil {
-				klog.V(5).Infof("No bug for %d", id)
-				continue
+				klog.V(5).Infof("No bug for %d, defaulting", id)
+				bug = &Bug{ObjectMeta: comments.ObjectMeta, Info: comments.Info}
 			}
 			if err := s.write(bug, comments); err != nil {
 				klog.Errorf("failed to write bug: %v", err)
@@ -301,6 +302,45 @@ ScanHeader:
 				continue
 			}
 			bug.Info.Status = parts[1]
+			if len(parts) > 2 {
+				bug.Info.Resolution = parts[2]
+			}
+		case strings.HasPrefix(text, "Severity: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Severity = parts[1]
+		case strings.HasPrefix(text, "Creator: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Creator = parts[1]
+		case strings.HasPrefix(text, "Assigned To: "):
+			parts := strings.SplitN(text, " ", 3)
+			if len(parts) < 2 || len(parts[2]) == 0 {
+				continue
+			}
+			bug.Info.AssignedTo = parts[2]
+		case strings.HasPrefix(text, "Keywords: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Keywords = strings.Split(parts[1], ", ")
+		case strings.HasPrefix(text, "Whiteboard: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Whiteboard = parts[1]
+		case strings.HasPrefix(text, "Internal Whiteboard: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.InternalWhiteboard = parts[1]
 		case text == "---":
 			foundSeparator = true
 			break ScanHeader

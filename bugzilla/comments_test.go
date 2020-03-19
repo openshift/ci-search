@@ -38,7 +38,7 @@ func TestCommentStore(t *testing.T) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer cancelFn()
 
-	informer := NewInformer(c, 30*time.Second, 1*time.Minute, func(metav1.ListOptions) SearchBugsArgs {
+	informer := NewInformer(c, 30*time.Second, 0, 1*time.Minute, func(metav1.ListOptions) SearchBugsArgs {
 		return SearchBugsArgs{
 			Quicksearch: "cf_internal_whiteboard:buildcop",
 		}
