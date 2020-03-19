@@ -132,6 +132,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 
 	br := bufio.NewReaderSize(pr, 512*1024)
 	filename := bytes.NewBuffer(make([]byte, 1024))
+	bytesRead := 0
 	linesRead := 0
 	matches := 0
 	match := make([]bytes.Buffer, maxLines)
@@ -166,7 +167,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		if n > 0 || (err != nil && err != io.EOF) {
 			klog.Errorf("Unread input %d: %v", n, err)
 		}
-		klog.V(2).Infof("Waiting for command to finish after reading %d lines", linesRead)
+		klog.V(2).Infof("Waiting for command to finish after reading %d lines and %d bytes", linesRead, bytesRead)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && matches == 0 {
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
@@ -182,6 +183,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 	if err != nil {
 		return err
 	}
+	bytesRead += len(chunk)
 	for {
 		linesRead++
 		isMatchLine := len(chunk) != 2 || chunk[0] != '-' || !bytes.Equal(chunk, []byte("--"))
@@ -191,7 +193,10 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			// beginning of line, find the filename
 			filenameEnd := bytes.IndexByte(chunk, 0x00)
 			if filenameEnd < 1 {
-				return fmt.Errorf("grep returned an unexpected empty line: %q", string(chunk))
+				if len(chunk) > 140 {
+					chunk = chunk[:140]
+				}
+				return fmt.Errorf("command returned an unexpected empty line at %d (bytes=%d): %q", linesRead, bytesRead, string(chunk))
 			}
 			// initialize the filename
 			nextFilename = chunk[:filenameEnd+1]
@@ -229,28 +234,26 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			line++
 		}
 
-		// skip the rest of the line
-		if isPrefix {
-			for {
-				chunk, isPrefix, err = br.ReadLine()
-				if err != nil {
-					if err := send(); err != nil {
-						klog.Errorf("Unable to send last search result: %v", err)
-					}
-					return err
-				}
-				if isPrefix {
-					break
-				}
-			}
-		} else {
+		// exhaust the rest of the current line
+		for isPrefix {
 			chunk, isPrefix, err = br.ReadLine()
 			if err != nil {
 				if err := send(); err != nil {
-					klog.Errorf("Unable to send last search result: %v", err)
+					return err
 				}
 				return err
 			}
+			bytesRead += len(chunk)
 		}
+
+		// read next line
+		chunk, isPrefix, err = br.ReadLine()
+		if err != nil {
+			if err := send(); err != nil {
+				return err
+			}
+			return err
+		}
+		bytesRead += len(chunk)
 	}
 }
