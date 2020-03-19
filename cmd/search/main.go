@@ -189,7 +189,7 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 		}
 		path = strings.TrimPrefix(path, "jobs/")
 
-		parts := strings.SplitN(path, "/", 7)
+		parts := strings.SplitN(path, "/", 8)
 		last := len(parts) - 1
 
 		var result Result
@@ -204,6 +204,15 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 			result.FileType = parts[last]
 		}
 
+		switch parts[1] {
+		case "logs":
+			result.Trigger = "build"
+		case "pr-logs":
+			result.Trigger = "pull"
+		default:
+			result.Trigger = parts[1]
+		}
+
 		var err error
 		result.Number, err = strconv.Atoi(parts[last-1])
 		if err != nil {
@@ -214,15 +223,6 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 			return nil, fmt.Errorf("not enough parts (%d < 3)", last)
 		}
 		result.Name = parts[last-2]
-
-		switch parts[1] {
-		case "logs":
-			result.Trigger = "build"
-		case "pr-logs":
-			result.Trigger = "pull"
-		default:
-			result.Trigger = parts[1]
-		}
 
 		result.LastModified = o.jobs.LastModified(path)
 
