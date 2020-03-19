@@ -75,7 +75,7 @@ func fetchJob(client *http.Client, job *ProwJob, resolver PathResolver, toDir st
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Spec.Job, job.Status.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, jobURIPrefix.String()), "build-log.txt")
-	internalPath := "builds/" + logPath
+	internalPath := "jobs/" + logPath
 	if _, err := resolver.MetadataFor(internalPath); err != nil {
 		klog.Errorf("unable to resolve metadata for: %s: %v", internalPath, err)
 		return nil
