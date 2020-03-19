@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,6 +83,8 @@ type BugComment struct {
 	Text         string      `json:"text"`
 }
 
+var bugCommentFields = []string{"id", "is_private", "creator", "creation_time", "time", "text"}
+
 type BugInfo struct {
 	ID                 int         `json:"id"`
 	Status             string      `json:"status"`
@@ -98,10 +101,16 @@ type BugInfo struct {
 	LastChangeTime     metav1.Time `json:"last_change_time"`
 }
 
+var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time"}
+
 type SearchBugsArgs struct {
 	LastChangeTime time.Time
 	IDs            []int
 	Quicksearch    string
+
+	IncludeFields []string
+	Limit         int
+	Offset        int
 }
 
 func (arg SearchBugsArgs) Add(v url.Values) {
@@ -113,6 +122,15 @@ func (arg SearchBugsArgs) Add(v url.Values) {
 	}
 	if len(arg.Quicksearch) > 0 {
 		v.Set("quicksearch", arg.Quicksearch)
+	}
+	if len(arg.IncludeFields) > 0 {
+		v.Set("include_fields", strings.Join(arg.IncludeFields, ","))
+	}
+	if arg.Limit > 0 {
+		v.Set("limit", strconv.Itoa(arg.Limit))
+	}
+	if arg.Offset > 0 || arg.Limit > 0 {
+		v.Set("offset", strconv.Itoa(arg.Offset))
 	}
 }
 

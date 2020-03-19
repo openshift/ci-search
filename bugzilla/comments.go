@@ -46,8 +46,8 @@ func NewCommentStore(client *Client, refreshInterval time.Duration, includePriva
 		queue: workqueue.NewNamed("comment_store"),
 
 		refreshInterval: refreshInterval,
-		rateLimit:       rate.NewLimiter(rate.Every(refreshInterval/12), 3),
-		maxBatch:        100,
+		rateLimit:       rate.NewLimiter(rate.Every(15*time.Second), 3),
+		maxBatch:        250,
 	}
 	return s
 }
@@ -71,10 +71,10 @@ func (s *CommentStore) Get(id int) (*BugComments, bool) {
 }
 
 func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, persisted PersistentCommentStore) error {
+	defer klog.V(2).Infof("Comment worker exited")
 	if s.refreshInterval == 0 {
 		return nil
 	}
-	done := ctx.Done()
 	if persisted != nil {
 		// load the full state into the store
 		list, err := persisted.Sync(nil)
@@ -87,14 +87,15 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, p
 		klog.V(4).Infof("Loaded %d bugs from disk", len(list))
 
 		// wait for bug cache to fill, then prune the list
-		if !cache.WaitForCacheSync(done, informer.HasSynced) {
-			return ctx.Err()
-		}
-		list, err = persisted.Sync(informer.GetStore().ListKeys())
-		if err != nil {
-			klog.Errorf("Unable to load initial comment state: %v", err)
-		}
-		klog.V(4).Infof("Prune disk to %d bugs", len(list))
+		// done := ctx.Done()
+		// if !cache.WaitForCacheSync(done, informer.HasSynced) {
+		// 	return ctx.Err()
+		// }
+		// list, err = persisted.Sync(informer.GetStore().ListKeys())
+		// if err != nil {
+		// 	klog.Errorf("Unable to load initial comment state: %v", err)
+		// }
+		// klog.V(4).Infof("Prune disk to %d bugs", len(list))
 	}
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{

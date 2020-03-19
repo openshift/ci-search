@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 
 	"k8s.io/klog"
 )
@@ -67,6 +68,7 @@ func (c *Client) BugCommentsByID(ctx context.Context, bugs ...int) (*BugComments
 	for _, bug := range bugs[1:] {
 		v.Add("ids", strconv.Itoa(bug))
 	}
+	v.Add("include_fields", strings.Join(bugCommentFields, ","))
 	u.RawQuery = v.Encode()
 
 	var bugList *BugCommentsList
@@ -82,6 +84,9 @@ func (c *Client) BugCommentsByID(ctx context.Context, bugs ...int) (*BugComments
 func (c *Client) SearchBugs(ctx context.Context, args SearchBugsArgs) (*BugInfoList, error) {
 	u := c.Base
 	u.Path = path.Join(u.Path, "bug")
+	if args.IncludeFields == nil {
+		args.IncludeFields = bugInfoFields
+	}
 	v := c.newRequestValues()
 	args.Add(v)
 	u.RawQuery = v.Encode()

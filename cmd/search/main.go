@@ -280,7 +280,10 @@ func (o *options) Run() error {
 		}
 		c.Client = &http.Client{Transport: rt}
 		informer := bugzilla.NewInformer(
-			c, 10*time.Minute, 30*time.Minute,
+			c,
+			10*time.Minute,
+			8*time.Hour,
+			30*time.Minute,
 			func(metav1.ListOptions) bugzilla.SearchBugsArgs {
 				return bugzilla.SearchBugsArgs{
 					Quicksearch: o.BugzillaSearch,

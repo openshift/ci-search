@@ -48,15 +48,16 @@ func (s *BugLister) Get(id int) (*Bug, error) {
 	return obj.(*Bug), nil
 }
 
-func NewInformer(client *Client, interval, resyncInterval time.Duration, argsFn func(metav1.ListOptions) SearchBugsArgs, includeFn func(*BugInfo) bool) cache.SharedIndexInformer {
+func NewInformer(client *Client, interval, maxInterval, resyncInterval time.Duration, argsFn func(metav1.ListOptions) SearchBugsArgs, includeFn func(*BugInfo) bool) cache.SharedIndexInformer {
 	lw := &ListWatcher{
 		client:      client,
 		argsFn:      argsFn,
 		includeFn:   includeFn,
 		interval:    interval,
-		maxInterval: resyncInterval,
+		maxInterval: maxInterval,
 	}
-	return cache.NewSharedIndexInformer(lw, &Bug{}, resyncInterval, nil)
+	lwPager := &cache.ListWatch{ListFunc: lw.List, WatchFunc: lw.Watch}
+	return cache.NewSharedIndexInformer(lwPager, &Bug{}, resyncInterval, nil)
 }
 
 type ListWatcher struct {
@@ -68,11 +69,34 @@ type ListWatcher struct {
 }
 
 func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) {
-	bugs, err := lw.client.SearchBugs(context.Background(), lw.argsFn(options))
+	args := lw.argsFn(options)
+	if options.Limit > 0 {
+		args.Limit = int(options.Limit) + 1
+	}
+	if len(options.Continue) > 0 {
+		if offset, err := strconv.Atoi(options.Continue); err == nil && offset > 0 {
+			args.Offset = offset
+		}
+	}
+	bugs, err := lw.client.SearchBugs(context.Background(), args)
 	if err != nil {
 		return nil, err
 	}
-	return NewBugList(bugs, lw.includeFn), nil
+	list := NewBugList(bugs, lw.includeFn)
+	if options.Limit > 0 {
+		returned := len(bugs.Bugs)
+		hasMore := returned > int(options.Limit)
+		if hasMore {
+			if int(options.Limit) > len(list.Items) {
+				list.Items = list.Items[:int(options.Limit)]
+			}
+			list.Continue = strconv.Itoa(args.Offset + int(options.Limit))
+		}
+		klog.V(2).Infof("Listed bugs offset=%d limit=%d total=%d items=%d hasMore=%t nextOffset=%s", args.Offset, options.Limit, returned, len(list.Items), hasMore, list.Continue)
+	} else {
+		klog.V(2).Infof("Listed bugs offset=%d limit=%d total=%d items=%d", args.Offset, options.Limit, len(bugs.Bugs), len(list.Items))
+	}
+	return list, nil
 }
 
 func (lw *ListWatcher) Watch(options metav1.ListOptions) (watch.Interface, error) {
@@ -116,16 +140,18 @@ func (w *periodicWatcher) run() {
 	defer close(w.ch)
 
 	// never watch longer than maxInterval
-	stop := time.After(w.maxInterval)
-	go func() {
-		select {
-		case <-stop:
-			klog.V(5).Infof("maximum duration reached %s", w.maxInterval)
-			w.ch <- watch.Event{Type: watch.Error, Object: &errors.NewResourceExpired(fmt.Sprintf("watch closed after %s, resync required", w.maxInterval)).ErrStatus}
-			w.stop()
-		case <-w.done:
-		}
-	}()
+	if w.maxInterval > 0 {
+		stop := time.After(w.maxInterval)
+		go func() {
+			select {
+			case <-stop:
+				klog.V(5).Infof("maximum duration reached %s", w.maxInterval)
+				w.ch <- watch.Event{Type: watch.Error, Object: &errors.NewResourceExpired(fmt.Sprintf("watch closed after %s, resync required", w.maxInterval)).ErrStatus}
+				w.stop()
+			case <-w.done:
+			}
+		}()
+	}
 
 	// a watch starts on the next visible change (which is a single second of precision for these queries)
 	rv := metav1.Time{Time: w.rv.Truncate(time.Second).Add(time.Second)}

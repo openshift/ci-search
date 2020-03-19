@@ -129,12 +129,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 
-	var count int
-	if index.Context >= 0 {
-		count, err = renderWithContext(req.Context(), writer, index, o.generator, start, o)
-	} else {
-		count, err = renderSummary(req.Context(), writer, index, o.generator, start, o)
-	}
+	count, err := renderMatches(req.Context(), writer, index, o.generator, start, o)
 
 	duration := time.Now().Sub(start)
 	if err != nil {
@@ -146,7 +141,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	klog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
 
 	stats := o.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - <a href="#" onclick="document.getElementById('results').classList.toggle('nowrap')">toggle line wrapping</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
 	if count == 0 {
 		fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
 	}
@@ -244,31 +239,45 @@ func (w *sortableWriter) Write(buf []byte) (int, error) {
 	return w.bw.Write(buf)
 }
 
-func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
-	count := 0
-	lineCount := 0
+func renderMatches(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
+	count, lineCount, matchCount := 0, 0, 0
 
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
 	drop := true
 	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if lastName == name {
+			// continue accumulating matches
 			if drop {
 				return
 			}
+			if index.Context <= 0 {
+				return
+			}
 			fmt.Fprintf(bw, "\n&mdash;\n\n")
+
 		} else {
 			// finish the last result
 			lastName = name
 			if !drop {
-				fmt.Fprintf(bw, `</pre></div>`)
+				if index.Context == 0 {
+					fmt.Fprintf(bw, "<td>%d</td></tr>\n", matchCount)
+				} else {
+					fmt.Fprintf(bw, "</pre></td></tr>\n")
+				}
 			}
 			drop = false
+			matchCount = 0
 
 			// decide whether to print the next result
 			result, err := resolver.MetadataFor(name)
 			if err != nil {
 				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
+				drop = true
+				return
+			}
+			if result.URI == nil {
+				klog.Errorf("no job URI for %q", name)
 				drop = true
 				return
 			}
@@ -280,19 +289,33 @@ func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator
 					drop = true
 					return
 				}
-				age = " " + units.HumanDuration(duration)
+				age = units.HumanDuration(duration) + " ago"
 			}
 
-			// output the result
 			count++
+			if count == 1 {
+				if index.Context > 0 {
+					fmt.Fprintln(bw, `<div class="table-responsive"><table class="table"><tbody><tr><th>Type</th><th>Job</th><th>Age</th></tr>`)
+				} else {
+					fmt.Fprintln(bw, `<div class="table-responsive"><table class="table"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
+				}
+			}
 			bw.SetIndex(-result.LastModified.Unix())
-			fmt.Fprintf(bw, `<div class="mb-4">`)
 			switch result.FileType {
 			case "bug":
-				fmt.Fprintf(bw, `<h5 class="mb-3"><a target="_blank" href="%s">%s</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.URI.String()), result.Name, template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
 			default:
-				fmt.Fprintf(bw, `<h5 class="mb-3">%s from %s <a target="_blank" href="%s">%s #%d</a>%s</h5><pre class="small">`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.Trigger), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 			}
+
+			if index.Context > 0 {
+				fmt.Fprintf(bw, "</tr>\n<tr class=\"row-match\"><td class=\"\" colspan=\"3\"><pre>")
+			}
+		}
+
+		matchCount++
+		if index.Context <= 0 {
+			return
 		}
 
 		// remove empty leading and trailing lines
@@ -320,80 +343,20 @@ func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator
 			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
 		}
 	})
+
 	if !drop {
-		fmt.Fprintf(bw, `</pre></div>`)
-	}
-	if err := bw.Flush(); err != nil {
-		klog.Errorf("Unable to flush results buffer: %v", err)
-	}
-	return count, err
-}
-
-func renderSummary(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
-	count := 0
-	currentLines := 0
-
-	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
-	var lastName string
-	drop := true
-	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
-		if lastName == name {
-			// continue accumulating matches
+		if index.Context <= 0 {
+			fmt.Fprintf(bw, "<td>%d</td></tr>\n", matchCount)
 		} else {
-			// finish the last result
-			lastName = name
-			if !drop {
-				fmt.Fprintf(bw, "<td>%d</td></tr>\n", currentLines)
-			}
-			drop = false
-			currentLines = 0
-
-			// decide whether to print the next result
-			result, err := resolver.MetadataFor(name)
-			if err != nil {
-				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
-				drop = true
-				return
-			}
-			if result.URI == nil {
-				klog.Errorf("no job URI for %q", name)
-				drop = true
-				return
-			}
-			var age string
-			if !result.LastModified.IsZero() {
-				duration := start.Sub(result.LastModified)
-				if !result.IgnoreAge && duration > index.MaxAge {
-					klog.V(5).Infof("Filtered %s, older than query limit", name)
-					drop = true
-					return
-				}
-				age = units.HumanDuration(duration) + " ago"
-			}
-
-			count++
-			if count == 1 {
-				fmt.Fprintf(bw, `<table class="table table-reponsive"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`+"\n")
-			}
-			bw.SetIndex(-result.LastModified.Unix())
-			switch result.FileType {
-			case "bug":
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
-			default:
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
-			}
+			fmt.Fprintf(bw, "</pre></td></tr>\n")
 		}
-
-		currentLines++
-	})
-
-	if !drop {
-		fmt.Fprintf(bw, "<td>%d</td></tr>\n", currentLines)
 	}
 	if err := bw.Flush(); err != nil {
 		klog.Errorf("Unable to flush results buffer: %v", err)
 	}
-	fmt.Fprintf(w, "</table>\n")
+	if count > 0 {
+		fmt.Fprintf(w, "</table></div>\n")
+	}
 	return count, err
 }
 
@@ -405,10 +368,13 @@ const htmlPageStart = `
 <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <style>
+#results.nowrap PRE { white-space: pre; }
+#results PRE { width: calc(99vw); white-space: pre-wrap; padding-bottom: 1em; }
+.row-match TD { border-top: 0; }
 </style>
 </head>
 <body>
-<div class="container-fluid">
+<div id="results" class="container-fluid">
 `
 
 const htmlPageEnd = `
