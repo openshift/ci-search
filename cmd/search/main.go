@@ -164,7 +164,9 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 
 		if comments, ok := o.bugs.Get(id); ok {
 			// take the time of last bug update or comment, whichever is newer
-			result.LastModified = comments.Comments[len(comments.Comments)-1].CreationTime.Time
+			if l := len(comments.Comments); l > 0 {
+				result.LastModified = comments.Comments[l-1].CreationTime.Time
+			}
 			if comments.Info.LastChangeTime.After(result.LastModified) {
 				result.LastModified = comments.Info.LastChangeTime.Time
 			}
