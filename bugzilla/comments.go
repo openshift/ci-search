@@ -257,7 +257,10 @@ func (s *CommentStore) bugAdd(obj interface{}) {
 			return
 		}
 	} else {
-		if err := s.store.Add(&BugComments{ObjectMeta: metav1.ObjectMeta{Name: bug.Name}}); err != nil {
+		if err := s.store.Add(&BugComments{
+			ObjectMeta: metav1.ObjectMeta{Name: bug.Name},
+			Info:       bug.Info,
+		}); err != nil {
 			klog.Errorf("Unable to add bug from informer: %v", err)
 			return
 		}

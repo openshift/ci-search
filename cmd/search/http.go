@@ -320,7 +320,7 @@ func renderWithContext(ctx context.Context, w io.Writer, index *Index, generator
 			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
 		}
 	})
-	if count > 0 {
+	if !drop {
 		fmt.Fprintf(bw, `</pre></div>`)
 	}
 	if err := bw.Flush(); err != nil {
@@ -387,7 +387,7 @@ func renderSummary(ctx context.Context, w io.Writer, index *Index, generator Com
 		currentLines++
 	})
 
-	if count > 0 {
+	if !drop {
 		fmt.Fprintf(bw, "<td>%d</td></tr>\n", currentLines)
 	}
 	if err := bw.Flush(); err != nil {
