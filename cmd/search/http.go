@@ -251,16 +251,15 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			if drop {
 				return
 			}
-			if index.Context <= 0 {
-				return
+			if index.Context > 0 {
+				fmt.Fprintf(bw, "\n&mdash;\n\n")
 			}
-			fmt.Fprintf(bw, "\n&mdash;\n\n")
 
 		} else {
 			// finish the last result
 			lastName = name
 			if !drop {
-				if index.Context == 0 {
+				if index.Context < 0 {
 					fmt.Fprintf(bw, "<td>%d</td></tr>\n", matchCount)
 				} else {
 					fmt.Fprintf(bw, "</pre></td></tr>\n")
@@ -294,7 +293,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 
 			count++
 			if count == 1 {
-				if index.Context > 0 {
+				if index.Context >= 0 {
 					fmt.Fprintln(bw, `<div class="table-responsive"><table class="table"><tbody><tr><th>Type</th><th>Job</th><th>Age</th></tr>`)
 				} else {
 					fmt.Fprintln(bw, `<div class="table-responsive"><table class="table"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
@@ -303,18 +302,18 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			bw.SetIndex(-result.LastModified.Unix())
 			switch result.FileType {
 			case "bug":
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
 			default:
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td>%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
 			}
 
-			if index.Context > 0 {
-				fmt.Fprintf(bw, "</tr>\n<tr class=\"row-match\"><td class=\"\" colspan=\"3\"><pre>")
+			if index.Context >= 0 {
+				fmt.Fprintf(bw, "</tr>\n<tr class=\"row-match\"><td class=\"\" colspan=\"3\"><pre class=\"small\">")
 			}
 		}
 
 		matchCount++
-		if index.Context <= 0 {
+		if index.Context < 0 {
 			return
 		}
 
@@ -369,8 +368,9 @@ const htmlPageStart = `
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <style>
 #results.nowrap PRE { white-space: pre; }
-#results PRE { width: calc(99vw); white-space: pre-wrap; padding-bottom: 1em; }
+#results PRE { width: calc(95vw - 2.5em); white-space: pre-wrap; padding-bottom: 1em; }
 .row-match TD { border-top: 0; }
+.table TD { padding-bottom: 0.25rem; }
 </style>
 </head>
 <body>
