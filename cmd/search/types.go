@@ -114,7 +114,13 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 	}
 
 	switch req.FormValue("type") {
-	case "bug+junit", "":
+	case "":
+		if mode == "chart" {
+			index.SearchType = "all"
+		} else {
+			index.SearchType = "bug+junit"
+		}
+	case "bug+junit":
 		index.SearchType = "bug+junit"
 	case "bug":
 		index.SearchType = "bug"
