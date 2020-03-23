@@ -156,7 +156,12 @@ func (index *pathIndex) Load() error {
 		return err
 	}
 
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].age.After(ordered[j].age) })
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].age.Before(ordered[j].age) {
+			return false
+		}
+		return true
+	})
 	pathIndex := make(map[string]int, len(ordered))
 	for i, item := range ordered {
 		path := strings.TrimPrefix(item.path, index.base)
@@ -216,9 +221,9 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 		oldest = time.Now().Add(-index.MaxAge)
 	}
 
-	var grown bool
 	for _, path := range paths {
 		if path.age.Before(oldest) {
+			klog.V(2).Infof("Stopped path index at %s because it is before %s", path.path, oldest)
 			break
 		}
 		if all || path.index == searchType {
@@ -226,13 +231,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 				continue
 			}
 			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
-			grown = true
 		}
 	}
-
-	if !grown {
-		return nil, fmt.Errorf("no entries")
-	}
-
 	return initial, nil
 }
