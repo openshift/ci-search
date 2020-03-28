@@ -183,6 +183,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 	if err != nil {
 		return err
 	}
+	position := 0
 	bytesRead += len(chunk)
 	for {
 		linesRead++
@@ -196,10 +197,17 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 				if len(chunk) > 140 {
 					chunk = chunk[:140]
 				}
-				return fmt.Errorf("command returned an unexpected empty line at %d (bytes=%d): %q", linesRead, bytesRead, string(chunk))
+				return fmt.Errorf("command returned an unexpected empty line at position %d, %d (bytes=%d): %q", position, linesRead, bytesRead, string(chunk))
 			}
 			// initialize the filename
 			nextFilename = chunk[:filenameEnd+1]
+			switch {
+			case len(nextFilename) == 0:
+				klog.Errorf("Found empty filename position %d", position)
+			case nextFilename[0] != '/':
+				klog.Errorf("Found filename without leading / at position %d: %s", position, string(nextFilename))
+			}
+			position += filenameEnd + 1
 			chunk = chunk[filenameEnd+1:]
 			if filename.Len() == 0 {
 				filename.Write(nextFilename)
@@ -236,6 +244,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 
 		// exhaust the rest of the current line
 		for isPrefix {
+			position += len(chunk)
 			chunk, isPrefix, err = br.ReadLine()
 			if err != nil {
 				if err := send(); err != nil {
@@ -247,6 +256,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		}
 
 		// read next line
+		position += len(chunk)
 		chunk, isPrefix, err = br.ReadLine()
 		if err != nil {
 			if err := send(); err != nil {

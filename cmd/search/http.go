@@ -29,7 +29,6 @@ type Match struct {
 }
 
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
-	o.ConfigPath = "README.md"
 	if o.ConfigPath == "" {
 		w.WriteHeader(http.StatusNoContent)
 		return
