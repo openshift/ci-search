@@ -369,7 +369,7 @@ func (a *LogAccumulator) Finished(ctx context.Context) {
 	if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
 		klog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
 	}
-	for _, file := range []string{"junit.failures"} {
+	for _, file := range []string{"junit.failures", "build-log.txt"} {
 		_, ok := a.exists[file]
 		if ok {
 			continue
