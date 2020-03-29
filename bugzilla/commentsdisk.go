@@ -47,14 +47,17 @@ func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store Com
 			}
 			id, err := strconv.Atoi(obj.(string))
 			if err != nil {
+				s.queue.Done(obj)
 				klog.Errorf("unexpected id in queue: %v", err)
 				continue
 			}
 			comments, ok := store.Get(id)
 			if !ok {
+				s.queue.Done(obj)
 				klog.V(5).Infof("No comments for %d", id)
 				continue
 			}
+			s.queue.Done(obj)
 			bug, err := lister.Get(id)
 			if err != nil {
 				klog.V(5).Infof("No bug for %d, defaulting", id)

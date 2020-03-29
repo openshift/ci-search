@@ -1,20 +1,4 @@
-/*
-Copyright 2018 The Kubernetes Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package main
+package prow
 
 import (
 	"context"
@@ -32,31 +16,198 @@ import (
 	"cloud.google.com/go/storage"
 	"k8s.io/klog"
 
-	"github.com/openshift/ci-search/testgrid/config"
 	"github.com/openshift/ci-search/testgrid/metadata/junit"
 	"github.com/openshift/ci-search/testgrid/util/gcs"
 )
 
-type LogExtractor struct {
-	path string
+// Build holds data to builds stored in GCS.
+type Build = gcs.Build
+
+// Builds holds a slice of builds, which will sort naturally (aka 2 < 10).
+type Builds = gcs.Builds
+
+type Summarizer interface {
+	New(*gcs.Build) Accumulator
 }
 
-func (e *LogExtractor) New(testGroup config.TestGroup) Summarizer {
-	return &LogSummarizer{
-		group:     &testGroup,
-		extractor: e,
+type Accumulator interface {
+	Artifacts(context.Context, <-chan *storage.ObjectAttrs, chan<- *storage.ObjectAttrs) error
+	AddSuites(context.Context, junit.Suites, map[string]string)
+	AddMetadata(context.Context, *gcs.Started, *gcs.Finished) (ok bool, err error)
+	Finished(context.Context)
+
+	Started() int64
+	// LastUpdate is the finished or started date.
+	LastUpdate() int64
+}
+
+// ReadBuild asynchronously downloads the files in build from gcs and convert them into a build.
+func ReadBuild(inputBuild Build, acc Accumulator) error {
+	var wg sync.WaitGroup                                                  // Each subtask does wg.Add(1), then we wg.Wait() for them to finish
+	ctx, cancel := context.WithTimeout(inputBuild.Context, 30*time.Second) // Allows aborting after first error
+	build := inputBuild
+	build.Context = ctx
+	ec := make(chan error) // Receives errors from anyone
+
+	// Download started.json, send to sc
+	wg.Add(1)
+	sc := make(chan gcs.Started) // Receives started.json result
+	go func() {
+		defer wg.Done()
+		started, err := build.Started()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+			case ec <- err:
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+		case sc <- *started:
+		}
+	}()
+
+	// Download finished.json, send to fc
+	wg.Add(1)
+	fc := make(chan gcs.Finished) // Receives finished.json result
+	go func() {
+		defer wg.Done()
+		finished, err := build.Finished()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+			case ec <- err:
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+		case fc <- *finished:
+		}
+	}()
+
+	// List artifacts to the artifacts channel
+	wg.Add(1)
+	artifacts := make(chan *storage.ObjectAttrs) // Receives objects
+	go func() {
+		defer wg.Done()
+		defer close(artifacts) // No more artifacts
+		if err := build.Artifacts(artifacts); err != nil {
+			select {
+			case <-ctx.Done():
+			case ec <- err:
+			}
+		}
+	}()
+
+	// Download each artifact, send row map to rc
+	// With parallelism: 60s without: 220s
+	wg.Add(1)
+	suiteArtifacts := make(chan *storage.ObjectAttrs)
+	go func() {
+		defer wg.Done()
+		defer close(suiteArtifacts)
+		if err := acc.Artifacts(ctx, artifacts, suiteArtifacts); err != nil {
+			select {
+			case <-ctx.Done():
+			case ec <- err:
+			}
+		}
+	}()
+
+	// Download each artifact, send row map to rc
+	// With parallelism: 60s without: 220s
+	wg.Add(1)
+	suitesChan := make(chan gcs.SuitesMeta)
+	go func() {
+		defer wg.Done()
+		defer close(suitesChan)
+		if err := build.Suites(suiteArtifacts, suitesChan); err != nil {
+			select {
+			case <-ctx.Done():
+			case ec <- err:
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for suitesMeta := range suitesChan {
+			acc.AddSuites(ctx, suitesMeta.Suites, suitesMeta.Metadata)
+		}
+	}()
+
+	// Wait for everyone to complete their work
+	go func() {
+		wg.Wait()
+		select {
+		case <-ctx.Done():
+			return
+		case ec <- nil:
+		}
+	}()
+	var finished *gcs.Finished
+	var started *gcs.Started
+	for { // Wait until we receive started and finished and/or an error
+		select {
+		case err := <-ec:
+			if err != nil {
+				cancel()
+				return fmt.Errorf("failed to read %s: %v", build, err)
+			}
+			break
+		case s := <-sc:
+			started = &s
+		case f := <-fc:
+			finished = &f
+		}
+		if started != nil && finished != nil {
+			break
+		}
 	}
+	if ok, err := acc.AddMetadata(ctx, started, finished); !ok || err != nil {
+		cancel()
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		cancel()
+		return fmt.Errorf("interrupted reading %s", build)
+	case err := <-ec:
+		if err != nil {
+			cancel()
+			return fmt.Errorf("failed to read %s: %v", build, err)
+		}
+	}
+
+	acc.Finished(ctx)
+
+	cancel()
+	return nil
 }
 
-type LogSummarizer struct {
-	group     *config.TestGroup
-	extractor *LogExtractor
+func Days(days int) time.Duration {
+	return time.Hour * 24 * time.Duration(days)
 }
 
-func (s *LogSummarizer) New(build *gcs.Build) Accumulator {
+func NewAccumulator(base string, build *gcs.Build, modifiedBefore time.Time) (*LogAccumulator, bool) {
 	prefix := filepath.FromSlash(build.Prefix)
 	number := path.Base(build.Prefix)
-	buildPath := filepath.Join(s.extractor.path, build.BucketPath, prefix)
+	buildPath := filepath.Join(base, build.BucketPath, prefix)
+
+	if !modifiedBefore.IsZero() {
+		if fi, err := os.Stat(buildPath); err == nil {
+			mod := fi.ModTime()
+			if !mod.Before(modifiedBefore) {
+				return nil, false
+			}
+		} else if !os.IsNotExist(err) {
+			klog.Errorf("unable to read filesystem date: %v", err)
+		}
+	}
 
 	exists := make(map[string]struct{})
 	files, _ := ioutil.ReadDir(buildPath)
@@ -65,22 +216,20 @@ func (s *LogSummarizer) New(build *gcs.Build) Accumulator {
 	}
 
 	return &LogAccumulator{
-		summarizer: s,
-		build:      build,
+		build: build,
 
 		path:   buildPath,
 		number: number,
 
 		exists: exists,
-	}
+	}, true
 }
 
 type LogAccumulator struct {
-	summarizer *LogSummarizer
-	build      *gcs.Build
-	path       string
-	number     string
-	succeeded  bool
+	build     *gcs.Build
+	path      string
+	number    string
+	succeeded bool
 
 	started    int64
 	finished   int64
@@ -91,6 +240,13 @@ type LogAccumulator struct {
 	lock     sync.Mutex
 	failures int
 	tails    map[string]*fileTail
+}
+
+func (a *LogAccumulator) MarkCompleted(at time.Time) error {
+	if err := os.MkdirAll(a.path, 0755); err != nil {
+		return err
+	}
+	return os.Chtimes(a.path, at, at)
 }
 
 type fileTail struct {
@@ -180,6 +336,12 @@ func (a *LogAccumulator) AddMetadata(ctx context.Context, started *gcs.Started, 
 	} else {
 		a.lastUpdate = a.started
 	}
+	if err := os.MkdirAll(a.path, 0755); err != nil {
+		return false, fmt.Errorf("unable to create directory: %v", err)
+	}
+	if err := os.Chtimes(a.path, time.Unix(a.started, 0), time.Unix(a.started, 0)); err != nil {
+		return false, fmt.Errorf("unable to set start time on directory: %v", err)
+	}
 	return true, nil
 }
 
@@ -235,7 +397,7 @@ func (a *LogAccumulator) IsFailureOrUnknown() bool {
 	return true
 }
 
-func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact, base string) error {
+func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storage.ObjectAttrs, base string) error {
 	if _, ok := a.exists[base]; ok {
 		return nil
 	}
@@ -246,7 +408,7 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact, base s
 	if err != nil {
 		return err
 	}
-	h := a.build.Bucket.Object(artifact)
+	h := a.build.Bucket.Object(artifact.Name)
 	r, err := h.NewReader(ctx)
 	if err != nil {
 		f.Close()
@@ -317,35 +479,25 @@ func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan *storag
 		}
 		switch {
 		case rel == "build-log.txt":
-
 			wg.Add(1)
 			go func(art *storage.ObjectAttrs) {
 				defer wg.Done()
-				if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
-					log.Printf("error: Unable to download %#v: %v", art, err)
-					select {
-					case <-ctx.Done():
-					case ec <- err:
-					}
-				}
-			}(art)
-
-		case strings.HasSuffix(art.Name, "e2e.log"):
-			break
-
-			// TODO: enable later
-			wg.Add(1)
-			go func(art string) {
-				defer wg.Done()
-				if err := a.downloadIfMissing(ctx, art, "e2e.log"); err != nil {
+				if err := a.downloadIfMissing(ctx, art, "build-log.txt"); err != nil {
 					log.Printf("error: Unable to download %s: %v", art, err)
 					select {
 					case <-ctx.Done():
 					case ec <- err:
 					}
 				}
-			}(art.Name)
 
+				// if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
+				// 	log.Printf("error: Unable to download %#v: %v", art, err)
+				// 	select {
+				// 	case <-ctx.Done():
+				// 	case ec <- err:
+				// 	}
+				// }
+			}(art)
 		default:
 			unprocessedArtifacts <- art
 			continue

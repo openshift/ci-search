@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,12 +13,6 @@ import (
 
 	"k8s.io/klog"
 )
-
-type PathSearcher interface {
-	// SearchPaths searches for paths matching the index's SearchType
-	// and MaxAge, and returns them as a slice of filesystem paths.
-	SearchPaths(*Index, []string) ([]string, error)
-}
 
 type PathAccessor interface {
 	// Stats returns aggregate statistics for the indexed paths.
@@ -42,9 +35,10 @@ type PathResolver interface {
 }
 
 type pathIndex struct {
-	base    string
-	baseURI *url.URL
-	maxAge  time.Duration
+	base     string
+	baseURI  *url.URL
+	maxAge   time.Duration
+	maxPaths int
 
 	lock      sync.Mutex
 	ordered   []pathAge
@@ -107,6 +101,9 @@ func (index *pathIndex) LastModified(path string) time.Time {
 	return time.Time{}
 }
 
+func (index *pathIndex) Notify(paths []string) {
+}
+
 func (index *pathIndex) Load() error {
 	ordered := make([]pathAge, 0, 1024)
 
@@ -135,21 +132,19 @@ func (index *pathIndex) Load() error {
 		if info.IsDir() {
 			return nil
 		}
-		relPath, err := filepath.Rel(index.base, path)
-		if err != nil {
-			return err
-		}
-		relPath = filepath.ToSlash(relPath)
+
 		switch info.Name() {
-		case "build-log.txt":
+		case "build-log.txt", "junit.failures":
 			stats.Entries++
 			stats.Size += info.Size()
-			ordered = append(ordered, pathAge{index: "build-log", path: relPath, age: info.ModTime()})
-		case "junit.failures":
-			stats.Entries++
-			stats.Size += info.Size()
-			ordered = append(ordered, pathAge{index: "junit", path: relPath, age: info.ModTime()})
+			relPath, err := filepath.Rel(index.base, path)
+			if err != nil {
+				return err
+			}
+			relPath = filepath.ToSlash(relPath)
+			ordered = append(ordered, pathAge{index: info.Name(), path: relPath, age: info.ModTime()})
 		}
+
 		return nil
 	})
 	if err != nil {
@@ -177,6 +172,19 @@ func (index *pathIndex) Load() error {
 	return nil
 }
 
+func (i *pathIndex) FilenamesForSearchType(searchType string) []string {
+	switch searchType {
+	case "", "bug+junit", "junit":
+		return []string{"junit.failures"}
+	case "build-log":
+		return []string{"build-log.txt"}
+	case "all":
+		return []string{"junit.failures", "build-log.txt"}
+	default:
+		return nil
+	}
+}
+
 func (i *pathIndex) Stats() PathIndexStats {
 	i.lock.Lock()
 	defer i.lock.Unlock()
@@ -184,13 +192,10 @@ func (i *pathIndex) Stats() PathIndexStats {
 }
 
 func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error) {
-	var reJob *regexp.Regexp
-	if index.Job != nil {
-		re, err := regexp.Compile(fmt.Sprintf("%s.*%s.*%s", string(filepath.Separator), index.Job.String(), string(filepath.Separator)))
-		if err != nil {
-			return nil, fmt.Errorf("unable to build search path regexp: %v", err)
-		}
-		reJob = re
+	// if there are no search targets return nil
+	names := i.FilenamesForSearchType(index.SearchType)
+	if len(names) == 0 {
+		return nil, nil
 	}
 
 	var paths []pathAge
@@ -198,9 +203,9 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 	paths = i.ordered
 	i.lock.Unlock()
 
-	// search all if we haven't built an index yet
-	if len(paths) == 0 {
-		return append(initial, i.base), nil
+	// search all if we haven't built an index yet, or if the number of paths is above the max
+	if l := len(paths); l == 0 || l > i.maxPaths {
+		return nil, nil
 	}
 
 	// grow the map to the desired size up front
@@ -208,12 +213,6 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 		copied := make([]string, len(initial), len(initial)+len(paths))
 		copy(copied, initial)
 		initial = copied
-	}
-
-	searchType := index.SearchType
-	all := len(searchType) == 0 || searchType == "all"
-	if searchType == "bug+junit" {
-		searchType = "junit"
 	}
 
 	var oldest time.Time
@@ -226,10 +225,7 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 			klog.V(2).Infof("Stopped path index at %s because it is before %s", path.path, oldest)
 			break
 		}
-		if all || path.index == searchType {
-			if reJob != nil && !reJob.MatchString(path.path) {
-				continue
-			}
+		if contains(names, path.index) {
 			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
 		}
 	}
