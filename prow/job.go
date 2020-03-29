@@ -1,51 +1,10 @@
-package main
+package prow
 
-import (
-	"errors"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
-	"time"
-
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/klog"
-)
-
+/*
 var uriNotFoundError = errors.New("URI not found")
 
-type ProwJobs struct {
-	Items []ProwJob `json:"items"`
-}
 
-type ProwJob struct {
-	Metadata Metadata  `json:"metadata"`
-	Spec     JobSpec   `json:"spec"`
-	Status   JobStatus `json:"status"`
-}
-
-type Metadata struct {
-}
-
-type JobSpec struct {
-	Type string `json:"type"`
-	Job  string `json:"job"`
-}
-
-type JobStatus struct {
-	State          string `json:"state"`
-	StartTime      string `json:"startTime"`
-	CompletionTime string `json:"completionTime"`
-	URL            string `json:"url"`
-	BuildID        string `json:"build_id"`
-}
-
-func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
+func (job *Job) StartStop() (time.Time, time.Time, error) {
 	var zero time.Time
 
 	started, err := time.Parse(time.RFC3339, job.Status.StartTime)
@@ -64,7 +23,7 @@ func (job *ProwJob) StartStop() (time.Time, time.Time, error) {
 	return started, finished, nil
 }
 
-func fetchJob(client *http.Client, job *ProwJob, resolver PathResolver, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
+func fetchJob(client *http.Client, job *Job, toDir string, jobURIPrefix *url.URL, artifactURIPrefix *url.URL, deckURI *url.URL) error {
 	_, stop, err := job.StartStop()
 	if err != nil {
 		return err
@@ -75,11 +34,6 @@ func fetchJob(client *http.Client, job *ProwJob, resolver PathResolver, toDir st
 		return fmt.Errorf("prow job %s %s had invalid URL: %s", job.Spec.Job, job.Status.BuildID, logPath)
 	}
 	logPath = path.Join(strings.TrimPrefix(logPath, jobURIPrefix.String()), "build-log.txt")
-	internalPath := "jobs/" + logPath
-	if _, err := resolver.MetadataFor(internalPath); err != nil {
-		klog.Errorf("unable to resolve metadata for: %s: %v", internalPath, err)
-		return nil
-	}
 
 	uris := make([]*url.URL, 0, 2)
 	if artifactURIPrefix != nil {
@@ -154,3 +108,4 @@ func fetchArtifact(client *http.Client, uri *url.URL, path string, date time.Tim
 
 	return nil
 }
+*/

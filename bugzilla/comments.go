@@ -158,6 +158,7 @@ func (s *CommentStore) run(ctx context.Context, persisted PersistentCommentStore
 			if done {
 				return ctx.Err()
 			}
+			s.queue.Done(k)
 			id, err := strconv.Atoi(k.(string))
 			if err != nil {
 				klog.Warningf("comment id was not parsable to int: %v", err)

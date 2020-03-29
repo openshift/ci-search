@@ -3,21 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
 
@@ -27,6 +25,7 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/prow"
 )
 
 func main() {
@@ -91,6 +90,7 @@ type options struct {
 	generator CommandGenerator
 
 	jobs         *pathIndex
+	jobLister    *prow.Lister
 	jobsPath     string
 	jobURIPrefix *url.URL
 
@@ -116,23 +116,36 @@ func (o *options) Stats() IndexStats {
 	}
 }
 
-func (o *options) SearchPaths(index *Index, initial []string) ([]string, error) {
+func (o *options) RipgrepSourceArguments(index *Index, initial []string) ([]string, error) {
 	switch index.SearchType {
 	case "bug":
 		if o.bugURIPrefix == nil {
 			return nil, fmt.Errorf("searching on bugs is not enabled")
 		}
-		return append(initial, "--glob", "!z-bug-*", o.bugsPath), nil
+		return append(initial, "--glob", "bug-*", o.bugsPath), nil
 	case "all", "bug+junit":
 		if o.bugURIPrefix != nil {
-			initial = append(initial, "--glob", "!z-bug-*", o.bugsPath)
+			initial = append(initial, "--glob", "bug-*", o.bugsPath)
 		}
 		fallthrough
 	default:
 		if o.jobURIPrefix == nil {
 			return nil, fmt.Errorf("searching on jobs is not enabled")
 		}
-		return o.jobs.SearchPaths(index, initial)
+		newArgs, err := o.jobs.SearchPaths(index, initial)
+		if err != nil {
+			return nil, err
+		}
+		if newArgs == nil {
+			newArgs = initial
+			if names := o.jobs.FilenamesForSearchType(index.SearchType); len(names) > 0 {
+				for _, name := range names {
+					newArgs = append(newArgs, "--glob", name)
+				}
+				newArgs = append(newArgs, o.jobsPath)
+			}
+		}
+		return newArgs, nil
 	}
 }
 
@@ -238,12 +251,6 @@ func (o *options) Run() error {
 		klog.Exitf("Unable to parse --job-uri-prefix: %v", err)
 	}
 	o.jobURIPrefix = jobURIPrefix
-
-	artifactURIPrefix, err := url.Parse(o.ArtifactURIPrefix)
-	if err != nil {
-		klog.Exitf("Unable to parse --artifact-uri-prefix: %v", err)
-	}
-
 	o.jobsPath = filepath.Join(o.Path, "jobs")
 	o.bugsPath = filepath.Join(o.Path, "bugs")
 
@@ -252,6 +259,13 @@ func (o *options) Run() error {
 		baseURI: jobURIPrefix,
 		maxAge:  o.MaxAge,
 	}
+	switch runtime.GOOS {
+	case "darwin":
+		indexedPaths.maxPaths = 512
+	default:
+		indexedPaths.maxPaths = 2048
+	}
+
 	o.jobs = indexedPaths
 
 	if len(o.BugzillaURL) > 0 {
@@ -306,14 +320,77 @@ func (o *options) Run() error {
 		go informer.Run(ctx.Done())
 		go store.Run(ctx, informer, diskStore)
 		go diskStore.Run(ctx, lister, store)
-		klog.Infof("Started bugzilla querier against %s with query %q", o.BugzillaURL, o.BugzillaSearch)
+		klog.Infof("Started indexing bugzilla %s with query %q", o.BugzillaURL, o.BugzillaSearch)
 	} else {
 		o.bugs = bugzilla.NewCommentStore(nil, 0, false)
+	}
+
+	if len(o.DeckURI) > 0 {
+		// read the index timestamp
+		var indexedAt time.Time
+		indexedAtPath := filepath.Join(o.jobsPath, ".indexed-at")
+		if data, err := ioutil.ReadFile(indexedAtPath); err == nil {
+			if value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+				indexedAt = time.Unix(value, 0)
+				klog.Infof("Last indexed at %s", indexedAt)
+			}
+		}
+
+		now := time.Now()
+
+		if o.MaxAge > 0 {
+			klog.Infof("Results expire after %s", o.MaxAge)
+			expiredAt := now.Add(-o.MaxAge)
+			if expiredAt.After(indexedAt) {
+				klog.Infof("Last index time is older than the allowed max age, setting to %s", expiredAt)
+				indexedAt = expiredAt
+			}
+		}
+
+		u, err := url.Parse(o.DeckURI)
+		if err != nil {
+			klog.Exitf("Unable to parse --deck-uri: %v", err)
+		}
+		deckURI := u
+		deckURI.Path = "/prowjobs.js"
+
+		c := prow.NewClient(*deckURI)
+		rt, err := rest.TransportFor(&rest.Config{})
+		if err != nil {
+			klog.Exitf("Unable to build prow client: %v", err)
+		}
+		gcsClient, err := storage.NewClient(context.Background())
+		if err != nil {
+			klog.Exitf("Unable to build gcs client: %v", err)
+		}
+		c.Client = &http.Client{Transport: rt}
+		informer := prow.NewInformer(
+			c,
+			2*time.Minute,
+			30*time.Minute,
+		)
+		lister := prow.NewLister(informer.GetIndexer())
+		o.jobLister = lister
+		store := prow.NewDiskStore(gcsClient, o.jobsPath, 15*time.Minute)
+
+		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
+			return fmt.Errorf("unable to create directory for artifact: %v", err)
+		}
+
+		ctx := context.Background()
+		go informer.Run(ctx.Done())
+		go store.Run(ctx, informer, lister, indexedPaths, 20)
+		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}
 
 	if err := indexedPaths.Load(); err != nil {
 		return err
 	}
+	go wait.Forever(func() {
+		if err := indexedPaths.Load(); err != nil {
+			klog.Errorf("Unable to index: %v", err)
+		}
+	}, time.Minute)
 
 	o.generator, err = NewCommandGenerator(o.Path, o)
 	if err != nil {
@@ -336,177 +413,6 @@ func (o *options) Run() error {
 			}
 		}()
 	}
-
-	// index what is on disk now
-	for i := 0; i < 3; i++ {
-		err := indexedPaths.Load()
-		if err == nil {
-			break
-		}
-		klog.Errorf("Failed to update indexed paths, retrying: %v", err)
-		time.Sleep(time.Second)
-	}
-
-	if o.Interval > 0 {
-		// read the index timestamp
-		var indexedAt time.Time
-		indexedAtPath := filepath.Join(o.jobsPath, ".indexed-at")
-		if data, err := ioutil.ReadFile(indexedAtPath); err == nil {
-			if value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
-				indexedAt = time.Unix(value, 0)
-				klog.Infof("Last indexed at %s", indexedAt)
-			}
-		}
-
-		now := time.Now()
-
-		if o.MaxAge > 0 {
-			klog.Infof("Results expire after %s", o.MaxAge)
-			expiredAt := now.Add(-o.MaxAge)
-			if expiredAt.After(indexedAt) {
-				klog.Infof("Last index time is older than the allowed max age, setting to %s", expiredAt)
-				indexedAt = expiredAt
-			}
-		}
-
-		if !indexedAt.IsZero() {
-			sinceLast := now.Sub(indexedAt)
-			if sinceLast < o.Interval {
-				sleep := o.Interval - sinceLast
-				klog.Infof("Indexer will start in %s", sleep.Truncate(time.Second))
-				time.Sleep(sleep)
-			}
-		}
-
-		client := &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSHandshakeTimeout: 10 * time.Second,
-				MaxConnsPerHost:     10,
-				Dial: (&net.Dialer{
-					Timeout: 30 * time.Second,
-				}).Dial,
-			},
-		}
-
-		var deckURI *url.URL
-		if len(o.DeckURI) > 0 {
-			u, err := url.Parse(o.DeckURI)
-			if err != nil {
-				klog.Exitf("Unable to parse --deck-uri: %v", err)
-			}
-			deckURI = u
-		}
-
-		klog.Infof("Starting build indexing (every %s)", o.Interval)
-		wait.Forever(func() {
-			var wg sync.WaitGroup
-			if deckURI != nil {
-				workCh := make(chan *ProwJob, 5)
-				for i := 0; i < cap(workCh); i++ {
-					wg.Add(1)
-					go func() {
-						defer klog.V(4).Infof("Indexer completed")
-						defer wg.Done()
-						for job := range workCh {
-							if err := fetchJob(client, job, o, o.jobsPath, jobURIPrefix, artifactURIPrefix, deckURI); err != nil {
-								klog.Warningf("Job index failed: %v", err)
-								continue
-							}
-						}
-					}()
-				}
-				go func() {
-					defer klog.V(4).Infof("Lister completed")
-					defer close(workCh)
-					dataURI := *deckURI
-					dataURI.Path = "/prowjobs.js"
-					resp, err := client.Get(dataURI.String())
-					if err != nil {
-						klog.Errorf("Unable to index prow jobs from Deck: %v", err)
-						return
-					}
-					defer resp.Body.Close()
-					if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-						klog.Errorf("Unable to query prow jobs: %d %s", resp.StatusCode, resp.Status)
-						return
-					}
-
-					newBytes, err := ioutil.ReadAll(resp.Body)
-					if err != nil {
-						klog.Errorf("Unable to read prow jobs from Deck: %v", err)
-						return
-					}
-
-					var jobs ProwJobs
-					if err := json.Unmarshal(newBytes, &jobs); err != nil {
-						klog.Errorf("Unable to decode prow jobs from Deck: %v", err)
-						return
-					}
-
-					jobLock.Lock()
-					jobBytes = newBytes
-					jobLock.Unlock()
-
-					klog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs.Items))
-					for i := range jobs.Items {
-						job := &jobs.Items[i]
-						if job.Status.State != "failure" {
-							continue
-						}
-						// jobs without a URL are unfetchable
-						if len(job.Status.URL) == 0 {
-							continue
-						}
-						workCh <- job
-					}
-				}()
-			}
-
-			if o.ConfigPath != "" {
-				wg.Add(1)
-				go func() {
-					defer klog.V(4).Infof("build-indexer completed")
-					defer wg.Done()
-					args := []string{"--config", o.ConfigPath, "--path", o.jobsPath, "--max-results", "500"}
-					if len(o.GCPServiceAccount) > 0 {
-						args = append(args, "--gcp-service-account", o.GCPServiceAccount)
-					}
-					if !indexedAt.IsZero() {
-						args = append(args, "--finished-after", strconv.FormatInt(indexedAt.Unix(), 10))
-					}
-					cmd := exec.Command("build-indexer", args...)
-					cmd.Stdout = os.Stderr
-					cmd.Stderr = os.Stderr
-
-					indexedAt = time.Now()
-					if err := cmd.Run(); err != nil {
-						klog.Errorf("Failed to index: %v", err)
-						return
-					}
-					indexDuration := time.Now().Sub(indexedAt)
-
-					// keep the index time stored on successful updates
-					klog.Infof("Index successful at %s, took %s", indexedAt, indexDuration.Truncate(time.Second))
-					if err := ioutil.WriteFile(indexedAtPath, []byte(fmt.Sprintf("%d", indexedAt.Unix())), 0644); err != nil {
-						klog.Errorf("Failed to write index marker: %v", err)
-					}
-				}()
-			}
-
-			wg.Wait()
-
-			for i := 0; i < 3; i++ {
-				err := indexedPaths.Load()
-				if err == nil {
-					break
-				}
-				klog.Errorf("Failed to update indexed paths, retrying: %v", err)
-				time.Sleep(time.Second)
-			}
-		}, o.Interval)
-	}
-
 	select {}
 }
 

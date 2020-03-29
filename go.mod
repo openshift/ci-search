@@ -5,10 +5,13 @@ go 1.13
 require (
 	cloud.google.com/go v0.47.0 // indirect
 	cloud.google.com/go/storage v1.0.0
+	github.com/coreos/etcd v3.3.10+incompatible
+	github.com/docker/docker-credential-helpers v0.6.3
 	github.com/docker/go-units v0.4.0
 	github.com/golang/protobuf v1.3.5
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/gorilla/mux v1.7.3
+	github.com/kelseyhightower/envconfig v1.4.0 // indirect
 	github.com/spf13/cobra v0.0.6
 	github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1 // indirect
 	golang.org/x/build v0.0.0-20190314133821-5284462c4bec // indirect
@@ -19,6 +22,7 @@ require (
 	k8s.io/client-go v0.17.4
 	k8s.io/klog v1.0.0
 	k8s.io/utils v0.0.0-20200229041039-0a110f9eb7ab
+	knative.dev/pkg v0.0.0-20200325183451-8a6d25b30970
 	sigs.k8s.io/yaml v1.1.0
 	vbom.ml/util v0.0.0-20180919145318-efcd4e0f9787
 )

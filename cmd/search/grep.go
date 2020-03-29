@@ -20,10 +20,16 @@ type CommandGenerator interface {
 	PathPrefix() string
 }
 
+type RipgrepSourceArguments interface {
+	// SearchPaths searches for paths matching the index's SearchType
+	// and MaxAge, and returns them as a slice of filesystem paths.
+	RipgrepSourceArguments(*Index, []string) ([]string, error)
+}
+
 type ripgrepGenerator struct {
-	execPath     string
-	searchPath   string
-	dynamicPaths PathSearcher
+	execPath   string
+	searchPath string
+	arguments  RipgrepSourceArguments
 }
 
 func (g ripgrepGenerator) Command(index *Index, search string) (string, []string, error) {
@@ -34,54 +40,23 @@ func (g ripgrepGenerator) Command(index *Index, search string) (string, []string
 		args = append(args, "--context", "0")
 	}
 	args = append(args, search)
-	var err error
-	args, err = g.dynamicPaths.SearchPaths(index, args)
+	newArgs, err := g.arguments.RipgrepSourceArguments(index, args)
 	if err != nil {
 		return "", nil, err
 	}
-	return g.execPath, args, nil
+	return g.execPath, newArgs, nil
 }
 
 func (g ripgrepGenerator) PathPrefix() string {
 	return g.searchPath
 }
 
-type grepGenerator struct {
-	execPath     string
-	searchPath   string
-	dynamicPaths PathSearcher
-}
-
-func (g grepGenerator) Command(index *Index, search string) (string, []string, error) {
-	args := []string{g.execPath, "--color=never", "-R", "--null", "-a"}
-	if index.Context >= 0 {
-		args = append(args, "--context", strconv.Itoa(index.Context))
-	} else {
-		args = append(args, "--context", "0")
-	}
-	args = append(args, search)
-	var err error
-	args, err = g.dynamicPaths.SearchPaths(index, args)
-	if err != nil {
-		return "", nil, err
-	}
-	return g.execPath, args, nil
-}
-
-func (g grepGenerator) PathPrefix() string {
-	return g.searchPath
-}
-
-func NewCommandGenerator(searchPath string, paths PathSearcher) (CommandGenerator, error) {
+func NewCommandGenerator(searchPath string, arguments RipgrepSourceArguments) (CommandGenerator, error) {
 	if path, err := exec.LookPath("rg"); err == nil {
 		klog.Infof("Using ripgrep at %s for searches", path)
-		return ripgrepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
+		return ripgrepGenerator{execPath: path, searchPath: searchPath, arguments: arguments}, nil
 	}
-	if path, err := exec.LookPath("grep"); err == nil {
-		klog.Infof("Using grep at %s for searches", path)
-		return grepGenerator{execPath: path, searchPath: searchPath, dynamicPaths: paths}, nil
-	}
-	return nil, fmt.Errorf("could not find 'rg' or 'grep' on the path")
+	return nil, fmt.Errorf("could not find 'rg' on the path")
 }
 
 // executeGrep search for matches to index and, for each match found,

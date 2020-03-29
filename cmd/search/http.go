@@ -9,6 +9,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -239,6 +241,15 @@ func (w *sortableWriter) Write(buf []byte) (int, error) {
 }
 
 func renderMatches(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
+	var reJob *regexp.Regexp
+	if index.Job != nil {
+		re, err := regexp.Compile(fmt.Sprintf("%s.*%s.*%s", string(filepath.Separator), index.Job.String(), string(filepath.Separator)))
+		if err != nil {
+			return 0, fmt.Errorf("unable to build search path regexp: %v", err)
+		}
+		reJob = re
+	}
+
 	count, lineCount, matchCount := 0, 0, 0
 
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
@@ -268,21 +279,26 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			matchCount = 0
 
 			// decide whether to print the next result
-			result, err := resolver.MetadataFor(name)
+			metadata, err := resolver.MetadataFor(name)
 			if err != nil {
 				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
 				drop = true
 				return
 			}
-			if result.URI == nil {
+			if metadata.URI == nil {
 				klog.Errorf("no job URI for %q", name)
 				drop = true
 				return
 			}
+			if reJob != nil && !reJob.MatchString(metadata.Name) {
+				drop = true
+				return
+			}
+
 			var age string
-			if !result.LastModified.IsZero() {
-				duration := start.Sub(result.LastModified)
-				if !result.IgnoreAge && duration > index.MaxAge {
+			if !metadata.LastModified.IsZero() {
+				duration := start.Sub(metadata.LastModified)
+				if !metadata.IgnoreAge && duration > index.MaxAge {
 					klog.V(5).Infof("Filtered %s, older than query limit", name)
 					drop = true
 					return
@@ -298,12 +314,12 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 					fmt.Fprintln(bw, `<div class="table-responsive"><table class="table"><tbody><tr><th>Type</th><th>Job</th><th>Age</th><th># of hits</th></tr>`)
 				}
 			}
-			bw.SetIndex(-result.LastModified.Unix())
-			switch result.FileType {
+			bw.SetIndex(-metadata.LastModified.Unix())
+			switch metadata.FileType {
 			case "bug":
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(metadata.FileType), template.HTMLEscapeString(metadata.URI.String()), template.HTMLEscapeString(metadata.Name), template.HTMLEscapeString(age))
 			default:
-				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(result.FileType), template.HTMLEscapeString(result.URI.String()), template.HTMLEscapeString(result.Name), result.Number, template.HTMLEscapeString(age))
+				fmt.Fprintf(bw, `<tr><td>%s</td><td><a target="_blank" href="%s">%s #%d</a></td><td class="text-nowrap">%s</td>`, template.HTMLEscapeString(metadata.FileType), template.HTMLEscapeString(metadata.URI.String()), template.HTMLEscapeString(metadata.Name), metadata.Number, template.HTMLEscapeString(age))
 			}
 
 			if index.Context >= 0 {
