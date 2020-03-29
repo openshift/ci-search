@@ -18,23 +18,7 @@ var jobBytes []byte
 type Job prow.Job
 
 func (job *Job) StartStop() (time.Time, time.Time, error) {
-	return time.Time{}, time.Time{}, nil
-	// var zero time.Time
-
-	// started, err := time.Parse(time.RFC3339, job.Status.StartTime)
-	// if err != nil {
-	// 	return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'startTime': %s", job.Spec.Job, job.Status.BuildID, err)
-	// }
-
-	// var finished time.Time
-	// if job.Status.CompletionTime != "" {
-	// 	finished, err = time.Parse(time.RFC3339, job.Status.CompletionTime)
-	// 	if err != nil {
-	// 		return zero, zero, fmt.Errorf("prow job %s #%s had invalid 'completionTime': %s", job.Spec.Job, job.Status.BuildID, err)
-	// 	}
-	// }
-
-	// return started, finished, nil
+	return job.Status.StartTime.Time, job.Status.CompletionTime.Time, nil
 }
 
 func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {

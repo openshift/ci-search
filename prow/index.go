@@ -68,6 +68,13 @@ func (s *DiskStore) Run(ctx context.Context, informer cache.SharedIndexInformer,
 				}
 				s.notifyChanged(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
 			},
+			UpdateFunc: func(_, obj interface{}) {
+				job, ok := obj.(*Job)
+				if !ok {
+					return
+				}
+				s.notifyChanged(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
+			},
 		},
 	})
 
