@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -50,13 +51,14 @@ func main() {
 	flag := cmd.Flags()
 
 	flag.StringVar(&opt.Path, "path", opt.Path, "The directory to save index results to.")
-	flag.StringVar(&opt.ListenAddr, "listen", opt.ListenAddr, "The address to serve release information on")
+	flag.StringVar(&opt.ListenAddr, "listen", opt.ListenAddr, "The address to serve search results on")
+	flag.StringVar(&opt.DebugAddr, "debug-listen", opt.DebugAddr, "The address to serve debug handlers on")
 	flag.AddGoFlag(original.Lookup("v"))
 
 	flag.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
-	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "The interval to index jobs. Set to 0 (the default) to disable indexing.")
-	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "Path on disk to a testgrid config for indexing.")
-	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "Path to a GCP service account file.")
+	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "Disabled) The interval to index jobs.")
+	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
+	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
 	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
 	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
@@ -72,6 +74,7 @@ func main() {
 
 type options struct {
 	ListenAddr string
+	DebugAddr  string
 	Path       string
 
 	// arguments to indexing
@@ -371,7 +374,7 @@ func (o *options) Run() error {
 		)
 		lister := prow.NewLister(informer.GetIndexer())
 		o.jobLister = lister
-		store := prow.NewDiskStore(gcsClient, o.jobsPath, 15*time.Minute)
+		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
 		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
 			return fmt.Errorf("unable to create directory for artifact: %v", err)
@@ -379,7 +382,7 @@ func (o *options) Run() error {
 
 		ctx := context.Background()
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, informer, lister, indexedPaths, 20)
+		go store.Run(ctx, informer, lister, indexedPaths, 40)
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}
 
@@ -397,6 +400,13 @@ func (o *options) Run() error {
 		return err
 	}
 
+	if len(o.DebugAddr) > 0 {
+		go func() {
+			if err := http.ListenAndServe(o.DebugAddr, nil); err != nil {
+				klog.Exitf("Debug server exited: %v", err)
+			}
+		}()
+	}
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
 		mux.HandleFunc("/chart", o.handleChart)
