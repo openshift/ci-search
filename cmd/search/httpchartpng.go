@@ -75,6 +75,10 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	maxDuration := 0
 	scatters := make([]*scatter, len(index.Search)+4)
 	for _, job := range jobs {
+		if index.Job != nil && !index.Job.MatchString(job.Spec.Job) {
+			continue
+		}
+
 		start, stop := job.Status.StartTime.Time, job.Status.CompletionTime.Time
 		if start.Before(minTime) {
 			continue
