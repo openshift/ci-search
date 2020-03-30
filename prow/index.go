@@ -13,6 +13,8 @@ import (
 
 	"cloud.google.com/go/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -39,6 +41,7 @@ func NewDiskStore(client *storage.Client, path string, maxAge time.Duration) *Di
 
 type JobAccessor interface {
 	Get(name string) (*Job, error)
+	List(labels.Selector) ([]*Job, error)
 }
 
 type JobAccessors []JobAccessor
@@ -57,6 +60,35 @@ func (a JobAccessors) Get(name string) (*Job, error) {
 		return nil, errors.NewNotFound(prowGR, name)
 	}
 	return nil, lastErr
+}
+
+func (a JobAccessors) List(s labels.Selector) ([]*Job, error) {
+	var lastErr error
+	var allJobs []*Job
+	found := sets.NewString()
+	for _, accessor := range a {
+		jobs, err := accessor.List(s)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if allJobs == nil {
+			allJobs = jobs
+			for _, job := range jobs {
+				found.Insert(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
+			}
+			continue
+		}
+		for _, job := range jobs {
+			key := fmt.Sprintf("%s/%s", job.Namespace, job.Name)
+			if found.Has(key) {
+				continue
+			}
+			found.Insert(key)
+			allJobs = append(allJobs, job)
+		}
+	}
+	return allJobs, lastErr
 }
 
 type PathNotifier interface {

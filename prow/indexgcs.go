@@ -15,6 +15,7 @@ import (
 	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 )
@@ -52,6 +53,16 @@ func (r *IndexReader) Get(name string) (*Job, error) {
 		return nil, errors.NewNotFound(prowGR, name)
 	}
 	return job, nil
+}
+
+func (r *IndexReader) List(labels.Selector) ([]*Job, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	copied := make([]*Job, 0, len(r.items))
+	for _, job := range r.items {
+		copied = append(copied, job)
+	}
+	return copied, nil
 }
 
 func (r *IndexReader) add(job *Job) {

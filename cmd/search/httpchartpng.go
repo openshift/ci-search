@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog"
 )
 
@@ -57,9 +58,10 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	width := 640
 	height := width / 21 * 9
 
-	jobs, err := getJobs()
+	jobs, err := o.jobAccessor.List(labels.Everything())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to unmarshal jobs: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to load jobs: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	maxTime := time.Now()
@@ -73,12 +75,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	maxDuration := 0
 	scatters := make([]*scatter, len(index.Search)+3)
 	for _, job := range jobs {
-		start, stop, err := job.StartStop()
-		if err != nil {
-			klog.Error(err)
-			continue
-		}
-
+		start, stop := job.Status.StartTime.Time, job.Status.CompletionTime.Time
 		if start.Before(minTime) {
 			continue
 		}
