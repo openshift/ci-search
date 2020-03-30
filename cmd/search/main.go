@@ -96,7 +96,7 @@ type options struct {
 	generator CommandGenerator
 
 	jobs         *pathIndex
-	jobLister    *prow.Lister
+	jobAccessor  prow.JobAccessors
 	jobsPath     string
 	jobURIPrefix *url.URL
 
@@ -377,8 +377,7 @@ func (o *options) Run() error {
 			30*time.Minute,
 		)
 		lister := prow.NewLister(informer.GetIndexer())
-		accessor := prow.JobAccessors{lister}
-		o.jobLister = lister
+		o.jobAccessor = prow.JobAccessors{lister}
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
 		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
@@ -391,11 +390,11 @@ func (o *options) Run() error {
 		ctx := context.Background()
 		if len(o.IndexBucket) > 0 {
 			indexReader := prow.NewIndexReader(gcsClient, o.IndexBucket, "job-state", o.MaxAge*3/4, *u)
-			accessor = append(accessor, indexReader)
+			o.jobAccessor = append(o.jobAccessor, indexReader)
 			go indexReader.Run(ctx, h)
 		}
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, accessor, indexedPaths, 40)
+		go store.Run(ctx, o.jobAccessor, indexedPaths, 40)
 
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}
