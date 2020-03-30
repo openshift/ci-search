@@ -243,7 +243,7 @@ func (w *sortableWriter) Write(buf []byte) (int, error) {
 func renderMatches(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
 	var reJob *regexp.Regexp
 	if index.Job != nil {
-		re, err := regexp.Compile(fmt.Sprintf("%s.*%s.*%s", string(filepath.Separator), index.Job.String(), string(filepath.Separator)))
+		re, err := regexp.Compile(fmt.Sprintf(`%[1]s[^%[1]s]*%[2]s[^%[1]s]*%[1]s`, string(filepath.Separator), index.Job.String()))
 		if err != nil {
 			return 0, fmt.Errorf("unable to build search path regexp: %v", err)
 		}
@@ -290,7 +290,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				drop = true
 				return
 			}
-			if reJob != nil && !reJob.MatchString(metadata.Name) {
+			if reJob != nil && !reJob.MatchString(name) {
 				drop = true
 				return
 			}
