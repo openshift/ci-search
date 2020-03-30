@@ -154,17 +154,11 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		}
 		index.MaxAge = maxAge
 	}
-	if mode == "chart" {
-		if index.MaxAge == 0 || index.MaxAge > 24*time.Hour {
-			index.MaxAge = 24 * time.Hour
-		}
-	} else {
-		if index.MaxAge == 0 {
-			index.MaxAge = 2 * 24 * time.Hour
-		}
-		if index.MaxAge > maxAge {
-			index.MaxAge = maxAge
-		}
+	if index.MaxAge == 0 {
+		index.MaxAge = 2 * 24 * time.Hour
+	}
+	if index.MaxAge > maxAge {
+		index.MaxAge = maxAge
 	}
 
 	if context := req.FormValue("context"); len(context) > 0 {
