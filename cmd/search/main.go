@@ -40,6 +40,7 @@ func main() {
 		MaxAge:            14 * 24 * time.Hour,
 		JobURIPrefix:      "https://prow.svc.ci.openshift.org/view/gcs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
+		IndexBucket:       "origin-ci-test",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -62,6 +63,7 @@ func main() {
 	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
 	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
+	flag.StringVar(&opt.IndexBucket, "index-bucket", opt.IndexBucket, "A GCS bucket to look for job indices in.")
 
 	flag.StringVar(&opt.BugzillaURL, "bugzilla-url", opt.BugzillaURL, "The URL of a bugzilla server to index bugs from.")
 	flag.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
@@ -85,6 +87,7 @@ type options struct {
 	ArtifactURIPrefix string
 	ConfigPath        string
 	DeckURI           string
+	IndexBucket       string
 
 	BugzillaURL       string
 	BugzillaSearch    string
@@ -366,6 +369,7 @@ func (o *options) Run() error {
 		if err != nil {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
+
 		c.Client = &http.Client{Transport: rt}
 		informer := prow.NewInformer(
 			c,
@@ -373,6 +377,7 @@ func (o *options) Run() error {
 			30*time.Minute,
 		)
 		lister := prow.NewLister(informer.GetIndexer())
+		accessor := prow.JobAccessors{lister}
 		o.jobLister = lister
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
@@ -380,9 +385,18 @@ func (o *options) Run() error {
 			return fmt.Errorf("unable to create directory for artifact: %v", err)
 		}
 
+		h := store.Handler()
+		informer.AddEventHandler(h)
+
 		ctx := context.Background()
+		if len(o.IndexBucket) > 0 {
+			indexReader := prow.NewIndexReader(gcsClient, o.IndexBucket, "job-state", o.MaxAge*3/4, *u)
+			accessor = append(accessor, indexReader)
+			go indexReader.Run(ctx, h)
+		}
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, informer, lister, indexedPaths, 40)
+		go store.Run(ctx, accessor, indexedPaths, 40)
+
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}
 

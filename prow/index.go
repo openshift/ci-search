@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -36,19 +37,41 @@ func NewDiskStore(client *storage.Client, path string, maxAge time.Duration) *Di
 	}
 }
 
+type JobAccessor interface {
+	Get(name string) (*Job, error)
+}
+
+type JobAccessors []JobAccessor
+
+func (a JobAccessors) Get(name string) (*Job, error) {
+	var lastErr error
+	for _, accessor := range a {
+		job, err := accessor.Get(name)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return job, nil
+	}
+	if lastErr == nil {
+		return nil, errors.NewNotFound(prowGR, name)
+	}
+	return nil, lastErr
+}
+
 type PathNotifier interface {
 	Notify(paths []string)
 }
 
-func (s *DiskStore) Run(ctx context.Context, informer cache.SharedIndexInformer, lister *Lister, notifier PathNotifier, workers int) {
-	informer.AddEventHandler(cache.FilteringResourceEventHandler{
+func (s *DiskStore) Handler() cache.ResourceEventHandler {
+	return cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
 			job, ok := obj.(*Job)
 			if !ok {
 				return false
 			}
 			switch job.Status.State {
-			case "aborted", "error", "failure":
+			case "aborted", "error", "failure", "success":
 				if len(job.Status.URL) == 0 || job.Status.CompletionTime.IsZero() {
 					return false
 				}
@@ -76,8 +99,10 @@ func (s *DiskStore) Run(ctx context.Context, informer cache.SharedIndexInformer,
 				s.notifyChanged(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
 			},
 		},
-	})
+	}
+}
 
+func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, workers int) {
 	for i := 0; i < workers; i++ {
 		go func(i int) {
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
@@ -93,10 +118,10 @@ func (s *DiskStore) Run(ctx context.Context, informer cache.SharedIndexInformer,
 						klog.Errorf("unexpected id in queue: %v", obj)
 						continue
 					}
-					job, err := lister.Get(id)
+					job, err := accessor.Get(id)
 					if err != nil {
 						s.queue.Done(id)
-						klog.V(5).Infof("No job for %d: %v", id, err)
+						klog.V(5).Infof("No job for %s: %v", id, err)
 						continue
 					}
 					ctx, cancelFn := context.WithTimeout(ctx, time.Minute)
