@@ -217,7 +217,9 @@ func (build Build) Finished() (*Finished, error) {
 // Artifacts writes the object name of all paths under the build's artifact dir to the output channel.
 func (build Build) Artifacts(artifacts chan<- *storage.ObjectAttrs) error {
 	pref := build.Prefix
-	objs := build.Bucket.Objects(build.Context, &storage.Query{Prefix: pref})
+	query := &storage.Query{Prefix: pref}
+	query.SetAttrSelection([]string{"Name", "Size"})
+	objs := build.Bucket.Objects(build.Context, query)
 	for {
 		obj, err := objs.Next()
 		if err == iterator.Done {

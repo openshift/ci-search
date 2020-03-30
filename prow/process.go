@@ -101,8 +101,7 @@ func ReadBuild(inputBuild Build, acc Accumulator) error {
 		}
 	}()
 
-	// Download each artifact, send row map to rc
-	// With parallelism: 60s without: 220s
+	// Download each artifact
 	wg.Add(1)
 	suiteArtifacts := make(chan *storage.ObjectAttrs)
 	go func() {
@@ -116,8 +115,7 @@ func ReadBuild(inputBuild Build, acc Accumulator) error {
 		}
 	}()
 
-	// Download each artifact, send row map to rc
-	// With parallelism: 60s without: 220s
+	// Process each suite
 	wg.Add(1)
 	suitesChan := make(chan gcs.SuitesMeta)
 	go func() {
@@ -222,6 +220,8 @@ func NewAccumulator(base string, build *gcs.Build, modifiedBefore time.Time) (*L
 		number: number,
 
 		exists: exists,
+
+		hasMetadata: make(chan struct{}),
 	}, true
 }
 
@@ -237,9 +237,10 @@ type LogAccumulator struct {
 
 	exists map[string]struct{}
 
+	hasMetadata chan struct{}
+
 	lock     sync.Mutex
 	failures int
-	tails    map[string]*fileTail
 }
 
 func (a *LogAccumulator) MarkCompleted(at time.Time) error {
@@ -325,6 +326,7 @@ func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites, met
 }
 
 func (a *LogAccumulator) AddMetadata(ctx context.Context, started *gcs.Started, finished *gcs.Finished) (ok bool, err error) {
+	defer close(a.hasMetadata)
 	if started == nil || finished == nil || finished.Timestamp == nil {
 		return false, nil
 	}
@@ -353,18 +355,6 @@ func (a *LogAccumulator) Finished(ctx context.Context) {
 
 	at := time.Unix(a.finished, 0)
 
-	// if we get no junit results, write the tail of any important logs to disk
-	if !a.succeeded && a.failures == 0 {
-		for base, t := range a.tails {
-			if err := t.Write(a.path); err != nil {
-				klog.Errorf("Unable to write captured tail %s: %v", base, err)
-			}
-			if err := os.Chtimes(filepath.Join(a.path, base), at, at); err != nil && !os.IsNotExist(err) {
-				klog.Errorf("Unable to set modification time of %s to %d: %v", base, a.finished, err)
-			}
-		}
-	}
-
 	// update the timestamps of things we always write
 	if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
 		klog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
@@ -388,13 +378,13 @@ func (a *LogAccumulator) LastUpdate() int64 {
 	return a.lastUpdate
 }
 
-func (a *LogAccumulator) IsFailureOrUnknown() bool {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	if a.finished > 0 {
-		return !a.succeeded
+func (a *LogAccumulator) waitMetadata(ctx context.Context) bool {
+	select {
+	case <-a.hasMetadata:
+		return true
+	case <-ctx.Done():
+		return false
 	}
-	return true
 }
 
 func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storage.ObjectAttrs, base string) error {
@@ -429,40 +419,36 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storag
 	return nil
 }
 
-func (a *LogAccumulator) downloadTailWhenFailure(ctx context.Context, artifact *storage.ObjectAttrs, base string, length int64) error {
+func (a *LogAccumulator) downloadIfMissingTail(ctx context.Context, artifact *storage.ObjectAttrs, base string, length int64) error {
 	if _, ok := a.exists[base]; ok {
 		return nil
 	}
-
-	// if we know we succeeded, we can skip downloading
-	if !a.IsFailureOrUnknown() {
-		return nil
+	if err := os.MkdirAll(a.path, 0755); err != nil {
+		return err
 	}
-
-	h := a.build.Bucket.Object(artifact.Name)
-	start := artifact.Size - length
-	if start < 0 {
-		start = 0
-	}
-	r, err := h.NewRangeReader(ctx, start, length)
+	f, err := os.Create(filepath.Join(a.path, base))
 	if err != nil {
+		return err
+	}
+	h := a.build.Bucket.Object(artifact.Name)
+
+	var r *storage.Reader
+	r, err = h.NewRangeReader(ctx, -length, -1)
+	if err != nil {
+		f.Close()
+		os.Remove(f.Name())
 		return err
 	}
 	defer r.Close()
-
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
+	if _, err := io.Copy(f, r); err != nil {
+		f.Close()
+		os.Remove(f.Name())
 		return err
 	}
-
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	if a.tails == nil {
-		a.tails = make(map[string]*fileTail)
-	}
-	a.tails[base] = &fileTail{
-		base: base,
-		buf:  [][]byte{data},
+	if err := f.Close(); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return err
 	}
 	return nil
 }
@@ -482,21 +468,17 @@ func (a *LogAccumulator) Artifacts(ctx context.Context, artifacts <-chan *storag
 			wg.Add(1)
 			go func(art *storage.ObjectAttrs) {
 				defer wg.Done()
-				if err := a.downloadIfMissing(ctx, art, "build-log.txt"); err != nil {
-					log.Printf("error: Unable to download %s: %v", art, err)
+				// if we can't get metadata, haven't finished, or haven't failed, don't download build log
+				if !a.waitMetadata(ctx) || a.succeeded || a.finished == 0 {
+					return
+				}
+				if err := a.downloadIfMissingTail(ctx, art, "build-log.txt", 20*1024*1024); err != nil {
+					log.Printf("error: Unable to download %s: %v", art.Name, err)
 					select {
 					case <-ctx.Done():
 					case ec <- err:
 					}
 				}
-
-				// if err := a.downloadTailWhenFailure(ctx, art, "build-log.txt", 32*1024); err != nil {
-				// 	log.Printf("error: Unable to download %#v: %v", art, err)
-				// 	select {
-				// 	case <-ctx.Done():
-				// 	case ec <- err:
-				// 	}
-				// }
 			}(art)
 		default:
 			unprocessedArtifacts <- art

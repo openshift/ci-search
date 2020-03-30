@@ -16,9 +16,11 @@ import (
 	"k8s.io/klog"
 )
 
+var prowGR = schema.GroupResource{Group: "search.openshift.io", Resource: "prow"}
+
 // NewLister lists jobs out of a cache.
 func NewLister(indexer cache.Indexer) *Lister {
-	return &Lister{indexer: indexer, resource: schema.GroupResource{Group: "search.openshift.io", Resource: "prow"}}
+	return &Lister{indexer: indexer, resource: prowGR}
 }
 
 type Lister struct {
@@ -33,13 +35,13 @@ func (s *Lister) List(selector labels.Selector) (ret []*Job, err error) {
 	return ret, err
 }
 
-func (s *Lister) Get(id string) (*Job, error) {
-	obj, exists, err := s.indexer.GetByKey(id)
+func (s *Lister) Get(name string) (*Job, error) {
+	obj, exists, err := s.indexer.GetByKey(name)
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.NewNotFound(s.resource, id)
+		return nil, errors.NewNotFound(s.resource, name)
 	}
 	return obj.(*Job), nil
 }
@@ -135,70 +137,3 @@ func (w *periodicWatcher) stop() {
 func (w *periodicWatcher) ResultChan() <-chan watch.Event {
 	return w.ch
 }
-
-/*
-klog.Infof("Starting build indexing (every %s)", o.Interval)
-wait.Forever(func() {
-	var wg sync.WaitGroup
-	if deckURI != nil {
-		workCh := make(chan *ProwJob, 5)
-		for i := 0; i < cap(workCh); i++ {
-			wg.Add(1)
-			go func() {
-				defer klog.V(4).Infof("Indexer completed")
-				defer wg.Done()
-				for job := range workCh {
-					if err := fetchJob(client, job, o, o.jobsPath, jobURIPrefix, artifactURIPrefix, deckURI); err != nil {
-						klog.Warningf("Job index failed: %v", err)
-						continue
-					}
-				}
-			}()
-		}
-		go func() {
-			defer klog.V(4).Infof("Lister completed")
-			defer close(workCh)
-			dataURI := *deckURI
-			dataURI.Path = "/prowjobs.js"
-			resp, err := client.Get(dataURI.String())
-			if err != nil {
-				klog.Errorf("Unable to index prow jobs from Deck: %v", err)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				klog.Errorf("Unable to query prow jobs: %d %s", resp.StatusCode, resp.Status)
-				return
-			}
-
-			newBytes, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				klog.Errorf("Unable to read prow jobs from Deck: %v", err)
-				return
-			}
-
-			var jobs ProwJobs
-			if err := json.Unmarshal(newBytes, &jobs); err != nil {
-				klog.Errorf("Unable to decode prow jobs from Deck: %v", err)
-				return
-			}
-
-			jobLock.Lock()
-			jobBytes = newBytes
-			jobLock.Unlock()
-
-			klog.Infof("Indexing failed build-log.txt files from prow (%d jobs)", len(jobs.Items))
-			for i := range jobs.Items {
-				job := &jobs.Items[i]
-				if job.Status.State != "failure" {
-					continue
-				}
-				// jobs without a URL are unfetchable
-				if len(job.Status.URL) == 0 {
-					continue
-				}
-				workCh <- job
-			}
-		}()
-	}
-*/
