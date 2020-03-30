@@ -17,7 +17,6 @@ var colors = []color.Color{
 	color.RGBA{0xe6, 0xbe, 0xff, 0xff}, // lavender
 	color.RGBA{0x00, 0x00, 0x75, 0xff}, // navy
 	color.RGBA{0x43, 0x63, 0xd8, 0xff}, // blue
-	color.RGBA{0x00, 0x00, 0x00, 0xff}, // black
 	color.RGBA{0xe6, 0x19, 0x4B, 0xff}, // red
 	color.RGBA{0x42, 0xd4, 0xf4, 0xff}, // cyan
 	color.RGBA{0xf0, 0x32, 0xe6, 0xff}, // magenta
@@ -30,6 +29,7 @@ var colors = []color.Color{
 }
 
 var specialColors = map[string]color.Color{
+	"error":   color.RGBA{0x00, 0x00, 0x00, 0xff}, // black
 	"failure": color.RGBA{0xf5, 0x82, 0x31, 0xff}, // orange
 	"pending": color.RGBA{0xff, 0xe1, 0x19, 0xff}, // yellow
 	"success": color.RGBA{0xa9, 0xa9, 0xa9, 0xff}, // gray
@@ -217,6 +217,8 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
           return;
         case 'success':
           return '{{hexColor .specialColors.success}}';
+        case 'error':
+          return '{{hexColor .specialColors.error}}';
         case 'failure':
           return '{{hexColor .specialColors.failure}}';
         case 'pending':
@@ -381,7 +383,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
           color: color({status: {state: 'failure'}}),
           text: matchCount + ' (' + Math.round(matchCount / (totalFailures || 1) * 100) + '% of all failures) other failures',
         });
-        ['pending', 'success'].forEach(state => {
+        ['error', 'pending', 'success'].forEach(state => {
           matchCount = data.filter(job => job.status.state === state).length;
           legend.push({
             color: color({status: {state: state}}),
