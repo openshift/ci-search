@@ -73,7 +73,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	}
 
 	maxDuration := 0
-	scatters := make([]*scatter, len(index.Search)+3)
+	scatters := make([]*scatter, len(index.Search)+4)
 	for _, job := range jobs {
 		start, stop := job.Status.StartTime.Time, job.Status.CompletionTime.Time
 		if start.Before(minTime) {
@@ -94,6 +94,8 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 		}
 		if i < 0 {
 			switch job.Status.State {
+			case "error":
+				i = len(scatters) - 4
 			case "failure":
 				i = len(scatters) - 3
 			case "pending":
@@ -156,6 +158,8 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 			clr = specialColors["pending"]
 		case 3:
 			clr = specialColors["failure"]
+		case 4:
+			clr = specialColors["error"]
 		default:
 			if i < len(colors) {
 				clr = colors[i]
