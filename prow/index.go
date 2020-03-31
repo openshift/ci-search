@@ -104,7 +104,7 @@ func (s *DiskStore) Handler() cache.ResourceEventHandler {
 			}
 			switch job.Status.State {
 			case "aborted", "error", "failure", "success":
-				if len(job.Status.URL) == 0 || job.Status.CompletionTime.IsZero() {
+				if len(job.Status.URL) == 0 || job.Status.CompletionTime == nil {
 					return false
 				}
 				if s.maxAge > 0 && job.Status.CompletionTime.Time.Add(s.maxAge).Before(time.Now()) {

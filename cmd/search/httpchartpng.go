@@ -79,7 +79,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		start, stop := job.Status.StartTime.Time, job.Status.CompletionTime.Time
+		start, stopPtr := job.Status.StartTime.Time, job.Status.CompletionTime
 		if start.Before(minTime) {
 			continue
 		}
@@ -122,8 +122,9 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		if stop.IsZero() {
-			stop = maxTime
+		stop := maxTime
+		if stopPtr != nil {
+			stop = stopPtr.Time
 		}
 
 		dur := int(stop.Sub(start).Seconds())

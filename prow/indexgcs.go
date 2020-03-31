@@ -112,7 +112,7 @@ func (r *IndexReader) Run(ctx context.Context, handler cache.ResourceEventHandle
 				Status: JobStatus{
 					State:          state,
 					URL:            statusURL.String(),
-					CompletionTime: metav1.Time{time.Unix(completed, 0)},
+					CompletionTime: &metav1.Time{time.Unix(completed, 0)},
 				},
 			}
 			r.add(job)

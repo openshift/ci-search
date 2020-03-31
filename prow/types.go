@@ -26,11 +26,11 @@ type JobSpec struct {
 }
 
 type JobStatus struct {
-	State          string      `json:"state"`
-	StartTime      metav1.Time `json:"startTime"`
-	CompletionTime metav1.Time `json:"completionTime"`
-	URL            string      `json:"url"`
-	BuildID        string      `json:"build_id"`
+	State          string       `json:"state"`
+	StartTime      metav1.Time  `json:"startTime"`
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+	URL            string       `json:"url"`
+	BuildID        string       `json:"build_id"`
 }
 
 func (j Job) DeepCopyObject() runtime.Object {

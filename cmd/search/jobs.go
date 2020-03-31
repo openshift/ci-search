@@ -24,17 +24,17 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	}
 	// sort uncompleted -> newest completed -> oldest completed
 	sort.Slice(jobs, func(i, j int) bool {
-		iTime, jTime := jobs[i].Status.CompletionTime.Time, jobs[j].Status.CompletionTime.Time
-		if iTime.Equal(jTime) {
+		iTime, jTime := jobs[i].Status.CompletionTime, jobs[j].Status.CompletionTime
+		if iTime == nil {
 			return true
 		}
-		if iTime.IsZero() && !jTime.IsZero() {
-			return true
-		}
-		if !iTime.IsZero() && jTime.IsZero() {
+		if jTime == nil {
 			return false
 		}
-		return jTime.Before(iTime)
+		if iTime.Time.Equal(jTime.Time) {
+			return true
+		}
+		return jTime.Time.Before(iTime.Time)
 	})
 	list := prow.JobList{Items: make([]prow.Job, 0, len(jobs))}
 	for _, job := range jobs {
