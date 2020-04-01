@@ -19,6 +19,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
+	gcpoption "google.golang.org/api/option"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -365,7 +366,7 @@ func (o *options) Run() error {
 		if err != nil {
 			klog.Exitf("Unable to build prow client: %v", err)
 		}
-		gcsClient, err := storage.NewClient(context.Background())
+		gcsClient, err := storage.NewClient(context.Background(), gcpoption.WithoutAuthentication())
 		if err != nil {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
