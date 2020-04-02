@@ -28,8 +28,6 @@ import (
 
 	"github.com/openshift/ci-search/bugzilla"
 	"github.com/openshift/ci-search/prow"
-
-	"github.com/openshift/library-go/pkg/proc"
 )
 
 func main() {
@@ -39,7 +37,7 @@ func main() {
 	original.Set("v", "2")
 
 	// the reaper handles duties running as PID 1 when in a contanier
-	go proc.StartReaper()
+	// go proc.StartReaper()
 
 	opt := &options{
 		ListenAddr:        ":8080",
