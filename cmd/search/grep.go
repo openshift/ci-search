@@ -149,7 +149,6 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 					return
 				}
 			}
-			klog.Errorln(errOut.String())
 			klog.Errorf("Failed to wait for command: %v", err)
 		}
 	}()
