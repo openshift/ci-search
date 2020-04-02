@@ -249,12 +249,20 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 		reJob = re
 	}
 
+	maxMatches := index.MaxMatches
+	if maxMatches == 0 {
+		maxMatches = 50
+	}
+	if index.Context < 0 {
+		maxMatches = 10
+	}
+
 	count, lineCount, matchCount := 0, 0, 0
 
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
 	drop := true
-	err := executeGrep(ctx, generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		if lastName == name {
 			// continue accumulating matches
 			if drop {
