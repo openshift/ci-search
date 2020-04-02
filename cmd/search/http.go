@@ -306,7 +306,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			if !metadata.LastModified.IsZero() {
 				duration := start.Sub(metadata.LastModified)
 				if !metadata.IgnoreAge && duration > index.MaxAge {
-					klog.V(5).Infof("Filtered %s, older than query limit", name)
+					klog.V(7).Infof("Filtered %s, older than query limit", name)
 					drop = true
 					return
 				}
