@@ -8,11 +8,15 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"k8s.io/klog"
 )
 
 func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	defer func() { klog.Infof("Render search result in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+
 	index, err := parseRequest(req, "text", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)

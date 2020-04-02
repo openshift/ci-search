@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"net/http"
 	"net/url"
+	"time"
 
 	"k8s.io/klog"
 )
@@ -36,6 +37,9 @@ var specialColors = map[string]color.Color{
 }
 
 func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	defer func() { klog.Infof("Render chart in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+
 	if req.Header.Get("Accept") == "text/png" {
 		o.handleChartPNG(w, req)
 		return
