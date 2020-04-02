@@ -61,7 +61,12 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 		reJob = re
 	}
 
-	err := executeGrep(ctx, o.generator, index, 30, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	maxMatches := index.MaxMatches
+	if maxMatches == 0 {
+		maxMatches = 25
+	}
+
+	err := executeGrep(ctx, o.generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
 		metadata, err := o.MetadataFor(name)
 		if err != nil {
 			klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
