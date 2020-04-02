@@ -14,7 +14,7 @@ github.com/BurntSushi/toml
 github.com/davecgh/go-spew/spew
 # github.com/docker/go-units v0.4.0
 github.com/docker/go-units
-# github.com/gogo/protobuf v1.2.2-0.20190723190241-65acae22fc9d
+# github.com/gogo/protobuf v1.3.1
 github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/sortkeys
 # github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e
@@ -58,6 +58,8 @@ github.com/jstemmer/go-junit-report/parser
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
+# github.com/openshift/library-go v0.0.0-20200402123743-4015ba624cae
+github.com/openshift/library-go/pkg/proc
 # github.com/spf13/cobra v0.0.6
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5
@@ -239,7 +241,7 @@ honnef.co/go/tools/staticcheck
 honnef.co/go/tools/stylecheck
 honnef.co/go/tools/unused
 honnef.co/go/tools/version
-# k8s.io/apimachinery v0.17.4
+# k8s.io/apimachinery v0.18.0
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/api/meta
 k8s.io/apimachinery/pkg/api/resource
@@ -279,7 +281,7 @@ k8s.io/apimachinery/pkg/util/yaml
 k8s.io/apimachinery/pkg/version
 k8s.io/apimachinery/pkg/watch
 k8s.io/apimachinery/third_party/forked/golang/reflect
-# k8s.io/client-go v0.17.4 => k8s.io/client-go v0.17.4
+# k8s.io/client-go v0.18.0 => k8s.io/client-go v0.17.4
 k8s.io/client-go/pkg/apis/clientauthentication
 k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1
 k8s.io/client-go/pkg/apis/clientauthentication/v1beta1
@@ -300,13 +302,15 @@ k8s.io/client-go/util/retry
 k8s.io/client-go/util/workqueue
 # k8s.io/klog v1.0.0
 k8s.io/klog
-# k8s.io/utils v0.0.0-20200229041039-0a110f9eb7ab
+# k8s.io/utils v0.0.0-20200324210504-a9aa75ae1b89
 k8s.io/utils/buffer
 k8s.io/utils/diff
 k8s.io/utils/field
 k8s.io/utils/integer
 k8s.io/utils/trace
-# sigs.k8s.io/yaml v1.1.0
+# sigs.k8s.io/structured-merge-diff/v3 v3.0.0
+sigs.k8s.io/structured-merge-diff/v3/value
+# sigs.k8s.io/yaml v1.2.0
 sigs.k8s.io/yaml
 # vbom.ml/util v0.0.0-20180919145318-efcd4e0f9787
 vbom.ml/util/sortorder

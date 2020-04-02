@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/openshift/ci-search/prow"
 	"k8s.io/apimachinery/pkg/labels"
@@ -12,6 +13,9 @@ import (
 )
 
 func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	defer func() { klog.Infof("Render job results in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+
 	if o.jobAccessor == nil {
 		http.Error(w, "Unable to serve jobs data because no prow data source was configured.", http.StatusInternalServerError)
 		return

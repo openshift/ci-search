@@ -39,6 +39,9 @@ func (s *scatter) At(x, y int) color.Color {
 }
 
 func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	defer func() { klog.Infof("Render chart PNG in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+
 	if req.Header.Get("Accept") == "text/html" {
 		o.handleChart(w, req)
 		return

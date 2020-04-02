@@ -50,6 +50,9 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 }
 
 func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	defer func() { klog.Infof("Render index in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		flusher = nopFlusher{}
@@ -128,21 +131,17 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	flusher.Flush()
 	fmt.Fprintf(writer, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
 
-	start := time.Now()
-
 	count, err := renderMatches(req.Context(), writer, index, o.generator, start, o)
-
-	duration := time.Now().Sub(start)
 	if err != nil {
-		klog.Errorf("Search %q failed with %d results in %s: command failed: %v", index.Search[0], count, duration, err)
+		klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], count, err)
 		fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
-	klog.V(2).Infof("Search %q completed with %d results in %s", index.Search[0], count, duration)
+	klog.V(2).Infof("Search %q completed with %d results", index.Search[0], count)
 
 	stats := o.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - <a href="#" onclick="document.getElementById('results').classList.toggle('nowrap')">toggle line wrapping</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, duration.Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - <a href="#" onclick="document.getElementById('results').classList.toggle('nowrap')">toggle line wrapping</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, time.Now().Sub(start).Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
 	if count == 0 {
 		fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
 	}
