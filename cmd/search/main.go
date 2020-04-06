@@ -410,7 +410,7 @@ func (o *options) Run() error {
 		if err := indexedPaths.Load(); err != nil {
 			klog.Errorf("Unable to index: %v", err)
 		}
-	}, time.Minute)
+	}, 3*time.Minute)
 
 	o.generator, err = NewCommandGenerator(o.Path, o)
 	if err != nil {

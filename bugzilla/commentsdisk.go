@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/walk"
 )
 
 type CommentDiskStore struct {
@@ -60,7 +62,6 @@ func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store Com
 			s.queue.Done(obj)
 			bug, err := lister.Get(id)
 			if err != nil {
-				klog.V(5).Infof("No bug for %d, defaulting", id)
 				bug = &Bug{ObjectMeta: comments.ObjectMeta, Info: comments.Info}
 			}
 			if err := s.write(bug, comments); err != nil {
@@ -86,7 +87,7 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*BugComments, error) {
 
 	bugs := make([]*BugComments, 0, 2048)
 
-	err := filepath.Walk(s.base, func(path string, info os.FileInfo, err error) error {
+	err := walk.Walk(s.base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
