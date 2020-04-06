@@ -192,10 +192,10 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 5 {
-		return nil, fmt.Errorf("job %s URL is not valid: %s", job.Name, job.Status.URL)
+		return nil, nil
 	}
 	if parts[0] != "view" || parts[1] != "gcs" {
-		return nil, fmt.Errorf("job %s URL is not valid: %s", job.Name, job.Status.URL)
+		return nil, nil
 	}
 
 	bucket := parts[2]

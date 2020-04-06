@@ -33,14 +33,13 @@ type PathIndexStats struct {
 type PathResolver interface {
 	// MetadataFor returns metadata for the slash-separated path
 	// resolved relative to the index base.
-	MetadataFor(path string) (*Result, error)
+	MetadataFor(path string) (Result, error)
 }
 
 type pathIndex struct {
-	base     string
-	baseURI  *url.URL
-	maxAge   time.Duration
-	maxPaths int
+	base    string
+	baseURI *url.URL
+	maxAge  time.Duration
 
 	lock      sync.Mutex
 	ordered   []pathAge
@@ -193,7 +192,7 @@ func (i *pathIndex) Stats() PathIndexStats {
 	return i.stats
 }
 
-func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error) {
+func (i *pathIndex) SearchPaths(index *Index) ([]string, error) {
 	// if there are no search targets return nil
 	names := i.FilenamesForSearchType(index.SearchType)
 	if len(names) == 0 {
@@ -206,16 +205,12 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 	i.lock.Unlock()
 
 	// search all if we haven't built an index yet, or if the number of paths is above the max
-	if l := len(paths); l == 0 || l > i.maxPaths {
+	if l := len(paths); l == 0 {
 		return nil, nil
 	}
 
 	// grow the map to the desired size up front
-	if len(paths) > len(initial) {
-		copied := make([]string, len(initial), len(initial)+len(paths))
-		copy(copied, initial)
-		initial = copied
-	}
+	copied := make([]string, 0, len(paths))
 
 	var oldest time.Time
 	if index.MaxAge > 0 {
@@ -228,8 +223,9 @@ func (i *pathIndex) SearchPaths(index *Index, initial []string) ([]string, error
 			break
 		}
 		if contains(names, path.index) {
-			initial = append(initial, filepath.Join(i.base, filepath.FromSlash(path.path)))
+			copied = append(copied, filepath.Join(i.base, filepath.FromSlash(path.path)))
 		}
 	}
-	return initial, nil
+
+	return copied, nil
 }

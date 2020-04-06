@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -126,57 +125,57 @@ func (o *options) Stats() IndexStats {
 	}
 }
 
-func (o *options) RipgrepSourceArguments(index *Index, initial []string) ([]string, error) {
+func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, error) {
+	var args []string
 	switch index.SearchType {
 	case "bug":
 		if o.bugURIPrefix == nil {
-			return nil, fmt.Errorf("searching on bugs is not enabled")
+			return nil, nil, fmt.Errorf("searching on bugs is not enabled")
 		}
-		return append(initial, "--glob", "bug-*", o.bugsPath), nil
+		return []string{"--glob", "bug-*", o.bugsPath}, nil, nil
 	case "all", "bug+junit":
 		if o.bugURIPrefix != nil {
-			initial = append(initial, "--glob", "bug-*", o.bugsPath)
+			args = []string{"--glob", "bug-*", o.bugsPath}
 		}
 		fallthrough
 	default:
 		if o.jobURIPrefix == nil {
-			return nil, fmt.Errorf("searching on jobs is not enabled")
+			return nil, nil, fmt.Errorf("searching on jobs is not enabled")
 		}
-		newArgs, err := o.jobs.SearchPaths(index, initial)
+		paths, err := o.jobs.SearchPaths(index)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if newArgs == nil {
-			newArgs = initial
+		if paths == nil {
 			if names := o.jobs.FilenamesForSearchType(index.SearchType); len(names) > 0 {
 				for _, name := range names {
-					newArgs = append(newArgs, "--glob", name)
+					args = append(args, "--glob", name)
 				}
-				newArgs = append(newArgs, o.jobsPath)
+				args = append(args, o.jobsPath)
 			}
 		}
-		return newArgs, nil
+		return args, paths, nil
 	}
 }
 
-func (o *options) MetadataFor(path string) (*Result, error) {
+func (o *options) MetadataFor(path string) (Result, error) {
+	var result Result
 	switch {
 	case strings.HasPrefix(path, "bugs/"):
 		if o.bugURIPrefix == nil {
-			return nil, fmt.Errorf("searching on bugs is not enabled")
+			return result, fmt.Errorf("searching on bugs is not enabled")
 		}
 		path = strings.TrimPrefix(path, "bugs/")
 
-		var result Result
 		result.FileType = "bug"
 		name := path
 		if !strings.HasPrefix(name, "bug-") {
-			return nil, fmt.Errorf("expected path bugs/bug-NUMBER: %s", path)
+			return result, fmt.Errorf("expected path bugs/bug-NUMBER: %s", path)
 		}
 		name = name[4:]
 		id, err := strconv.Atoi(name)
 		if err != nil {
-			return nil, fmt.Errorf("expected path bugs/bug-NUMBER: %s", path)
+			return result, fmt.Errorf("expected path bugs/bug-NUMBER: %s", path)
 		}
 		result.Name = fmt.Sprintf("Bug %d", id)
 		result.Number = id
@@ -204,11 +203,11 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 
 		result.IgnoreAge = true
 
-		return &result, nil
+		return result, nil
 
 	case strings.HasPrefix(path, "jobs/"):
 		if o.jobURIPrefix == nil {
-			return nil, fmt.Errorf("searching on jobs is not enabled")
+			return result, fmt.Errorf("searching on jobs is not enabled")
 		}
 		path = strings.TrimPrefix(path, "jobs/")
 
@@ -239,19 +238,19 @@ func (o *options) MetadataFor(path string) (*Result, error) {
 		var err error
 		result.Number, err = strconv.Atoi(parts[last-1])
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 
 		if last < 3 {
-			return nil, fmt.Errorf("not enough parts (%d < 3)", last)
+			return result, fmt.Errorf("not enough parts (%d < 3)", last)
 		}
 		result.Name = parts[last-2]
 
 		result.LastModified = o.jobs.LastModified(path)
 
-		return &result, nil
+		return result, nil
 	default:
-		return nil, fmt.Errorf("unrecognized result path: %s", path)
+		return result, fmt.Errorf("unrecognized result path: %s", path)
 	}
 }
 
@@ -268,12 +267,6 @@ func (o *options) Run() error {
 		base:    o.jobsPath,
 		baseURI: jobURIPrefix,
 		maxAge:  o.MaxAge,
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		indexedPaths.maxPaths = 512
-	default:
-		indexedPaths.maxPaths = 2048
 	}
 
 	o.jobs = indexedPaths

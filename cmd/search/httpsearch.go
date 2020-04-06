@@ -96,7 +96,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 		}
 
 		for _, m := range matches {
-			line := bytes.TrimRight(m.Bytes(), " ")
+			line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
 			match.Context = append(match.Context, string(line))
 		}
 		result[uri][search] = append(result[uri][search], match)

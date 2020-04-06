@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 
@@ -16,14 +17,14 @@ import (
 )
 
 type CommandGenerator interface {
-	Command(index *Index, search string) (cmd string, args []string, err error)
+	Command(index *Index, search string) (cmd string, args []string, paths []string, err error)
 	PathPrefix() string
 }
 
 type RipgrepSourceArguments interface {
 	// SearchPaths searches for paths matching the index's SearchType
 	// and MaxAge, and returns them as a slice of filesystem paths.
-	RipgrepSourceArguments(*Index, []string) ([]string, error)
+	RipgrepSourceArguments(*Index) (args []string, paths []string, err error)
 }
 
 type ripgrepGenerator struct {
@@ -32,19 +33,19 @@ type ripgrepGenerator struct {
 	arguments  RipgrepSourceArguments
 }
 
-func (g ripgrepGenerator) Command(index *Index, search string) (string, []string, error) {
-	args := []string{g.execPath, "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
+func (g ripgrepGenerator) Command(index *Index, search string) (string, []string, []string, error) {
+	args := []string{g.execPath, "-u", "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
 		args = append(args, "--context", "0")
 	}
 	args = append(args, search)
-	newArgs, err := g.arguments.RipgrepSourceArguments(index, args)
+	newArgs, paths, err := g.arguments.RipgrepSourceArguments(index)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
-	return g.execPath, newArgs, nil
+	return g.execPath, append(args, newArgs...), paths, nil
 }
 
 func (g ripgrepGenerator) PathPrefix() string {
@@ -80,20 +81,54 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 	return nil
 }
 
+func splitStringSliceByLength(arr []string, maxLength int) ([]string, []string) {
+	for i, s := range arr {
+		maxLength -= len(s) + 1
+		if maxLength <= 0 {
+			return arr[:i], arr[i:]
+		}
+	}
+	return arr, nil
+}
+
 func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
-	commandPath, commandArgs, err := gen.Command(index, search)
+	commandPath, commandArgs, commandPaths, err := gen.Command(index, search)
 	if err != nil {
 		return err
 	}
-	if commandArgs == nil { // no matching SearchPaths
-		return nil
+
+	// some platforms siginficantly limit number of arguments - we have to execute in batches
+	var maxArgs int
+	switch runtime.GOOS {
+	case "darwin":
+		maxArgs = 200 * 1024
+	default:
+		maxArgs = 64 * 1024 * 1024
 	}
-	klog.V(6).Infof("Executing query %s %v", commandPath, commandArgs)
+	for _, arg := range commandArgs {
+		maxArgs -= len(arg) + 1
+	}
 
 	pathPrefix := gen.PathPrefix()
-	cmd := &exec.Cmd{}
-	cmd.Path = commandPath
-	cmd.Args = commandArgs
+
+	for len(commandPaths) > 0 {
+		cmd := &exec.Cmd{}
+		cmd.Path = commandPath
+
+		var args []string
+		args, commandPaths = splitStringSliceByLength(commandPaths, maxArgs)
+		if len(args) == 0 {
+			return fmt.Errorf("argument longer than maximum shell length")
+		}
+		cmd.Args = append(commandArgs, args...)
+		if err := runSingleCommand(ctx, cmd, pathPrefix, index, search, maxLines, fn); err != nil && err != io.EOF {
+			return err
+		}
+	}
+	return nil
+}
+
+func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
 	errOut := &bytes.Buffer{}
 	cmd.Stderr = errOut
 	pr, err := cmd.StdoutPipe()
