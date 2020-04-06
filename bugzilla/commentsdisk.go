@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/walk"
 )
 
 type CommentDiskStore struct {
@@ -85,7 +87,7 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*BugComments, error) {
 
 	bugs := make([]*BugComments, 0, 2048)
 
-	err := filepath.Walk(s.base, func(path string, info os.FileInfo, err error) error {
+	err := walk.Walk(s.base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil

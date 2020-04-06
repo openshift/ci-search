@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/walk"
 )
 
 type PathAccessor interface {
@@ -118,7 +120,7 @@ func (index *pathIndex) Load() error {
 
 	stats := PathIndexStats{}
 
-	err = filepath.Walk(index.base, func(path string, info os.FileInfo, err error) error {
+	err = walk.Walk(index.base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
