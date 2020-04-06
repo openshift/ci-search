@@ -213,7 +213,6 @@ func (w *periodicWatcher) run() {
 			if list.Items[i].Info.LastChangeTime.Time.Before(rv.Time) {
 				continue
 			}
-			klog.V(5).Infof("Watch sending %s %#v", eventType, list.Items[i])
 			w.ch <- watch.Event{Type: eventType, Object: &list.Items[i]}
 		}
 		rv = nextRV

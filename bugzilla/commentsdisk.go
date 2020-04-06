@@ -60,7 +60,6 @@ func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store Com
 			s.queue.Done(obj)
 			bug, err := lister.Get(id)
 			if err != nil {
-				klog.V(5).Infof("No bug for %d, defaulting", id)
 				bug = &Bug{ObjectMeta: comments.ObjectMeta, Info: comments.Info}
 			}
 			if err := s.write(bug, comments); err != nil {
