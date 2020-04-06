@@ -258,6 +258,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	}
 
 	count, lineCount, matchCount := 0, 0, 0
+	lines := make([][]byte, 0, 64)
 
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
@@ -340,9 +341,9 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 		}
 
 		// remove empty leading and trailing lines
-		var lines [][]byte
+		lines = lines[:]
 		for _, m := range matches {
-			line := bytes.TrimRight(m.Bytes(), " ")
+			line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
 			if len(line) == 0 {
 				continue
 			}
