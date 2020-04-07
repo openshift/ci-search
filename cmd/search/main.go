@@ -149,7 +149,7 @@ func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, erro
 		if paths == nil {
 			if names := o.jobs.FilenamesForSearchType(index.SearchType); len(names) > 0 {
 				for _, name := range names {
-					args = append(args, "--glob", name)
+					args = append(args, "--glob", name+"*")
 				}
 				args = append(args, o.jobsPath)
 			}

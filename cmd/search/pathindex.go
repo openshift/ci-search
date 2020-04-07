@@ -134,17 +134,24 @@ func (index *pathIndex) Load() error {
 			return nil
 		}
 
-		switch info.Name() {
-		case "build-log.txt", "junit.failures":
-			stats.Entries++
-			stats.Size += info.Size()
-			relPath, err := filepath.Rel(index.base, path)
-			if err != nil {
-				return err
-			}
-			relPath = filepath.ToSlash(relPath)
-			ordered = append(ordered, pathAge{index: info.Name(), path: relPath, age: info.ModTime()})
+		var indexName string
+		switch name := info.Name(); {
+		case strings.HasPrefix(name, "build-log.txt"):
+			indexName = "build-log.txt"
+		case strings.HasPrefix(name, "junit.failures"):
+			indexName = "junit.failures"
+		default:
+			return nil
 		}
+
+		stats.Entries++
+		stats.Size += info.Size()
+		relPath, err := filepath.Rel(index.base, path)
+		if err != nil {
+			return err
+		}
+		relPath = filepath.ToSlash(relPath)
+		ordered = append(ordered, pathAge{index: indexName, path: relPath, age: info.ModTime()})
 
 		return nil
 	})
