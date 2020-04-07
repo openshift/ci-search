@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"k8s.io/klog"
@@ -81,6 +82,14 @@ func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLin
 	return nil
 }
 
+func estimateLength(arr []string) int {
+	l := 0
+	for _, s := range arr {
+		l += len(s)
+	}
+	return l
+}
+
 func splitStringSliceByLength(arr []string, maxLength int) ([]string, []string) {
 	for i, s := range arr {
 		maxLength -= len(s) + 1
@@ -122,6 +131,9 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		}
 		cmd.Args = append(commandArgs, args...)
 		if err := runSingleCommand(ctx, cmd, pathPrefix, index, search, maxLines, fn); err != nil && err != io.EOF {
+			if strings.Contains(err.Error(), "argument list too long") {
+				return fmt.Errorf("arguments too long: %d bytes", estimateLength(cmd.Args))
+			}
 			return err
 		}
 	}
