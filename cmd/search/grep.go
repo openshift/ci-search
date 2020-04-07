@@ -97,13 +97,13 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		return err
 	}
 
-	// some platforms siginficantly limit number of arguments - we have to execute in batches
+	// platforms limit the number of arguments - we have to execute in batches
 	var maxArgs int
 	switch runtime.GOOS {
 	case "darwin":
 		maxArgs = 200 * 1024
 	default:
-		maxArgs = 64 * 1024 * 1024
+		maxArgs = 2*1024*1024 - 32*1024
 	}
 	for _, arg := range commandArgs {
 		maxArgs -= len(arg) + 1
