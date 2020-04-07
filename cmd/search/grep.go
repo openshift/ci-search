@@ -73,8 +73,7 @@ func NewCommandGenerator(searchPath string, arguments RipgrepSourceArguments) (C
 func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
 	// FIXME: parallelize this
 	for _, search := range index.Search {
-		err := executeGrepSingle(ctx, gen, index, search, maxLines, fn)
-		if err != nil && err != io.EOF {
+		if err := executeGrepSingle(ctx, gen, index, search, maxLines, fn); err != nil {
 			return err
 		}
 	}
@@ -106,13 +105,13 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		return err
 	}
 
-	// platforms limit the number of arguments - we have to execute in batches
+	// platforms limit the length of arguments - we have to execute in batches
 	var maxArgs int
 	switch runtime.GOOS {
 	case "darwin":
 		maxArgs = 200 * 1024
 	default:
-		maxArgs = 2*1024*1024 - 32*1024
+		maxArgs = 2*1024*1024 - 256*1024
 	}
 	for _, arg := range commandArgs {
 		maxArgs -= len(arg) + 1
