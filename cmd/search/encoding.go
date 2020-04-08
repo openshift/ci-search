@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"k8s.io/klog"
 )
 
 type writeCloser interface {
@@ -35,10 +33,6 @@ func encodedWriter(w http.ResponseWriter, req *http.Request) writeCloser {
 		if encoding != "" {
 			break
 		}
-	}
-
-	if encoding != "" {
-		klog.V(4).Infof("response encoding %s", encoding)
 	}
 
 	if encoding == "gzip" {

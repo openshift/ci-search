@@ -126,18 +126,17 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 		maxArgs -= len(arg) + 1
 	}
 	maxBytes := index.MaxBytes
-
 	pathPrefix := gen.PathPrefix()
 
 	for len(commandPaths) > 0 {
-		cmd := &exec.Cmd{}
-		cmd.Path = commandPath
-
 		var args []string
 		args, commandPaths = splitStringSliceByLength(commandPaths, maxArgs)
 		if len(args) == 0 {
 			return fmt.Errorf("argument longer than maximum shell length")
 		}
+
+		cmd := &exec.Cmd{}
+		cmd.Path = commandPath
 		cmd.Args = append(commandArgs, args...)
 		bytesRead, err := runSingleCommand(ctx, cmd, pathPrefix, index, maxBytes, search, fn)
 		if err != nil && err != io.EOF {
@@ -146,6 +145,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			}
 			return err
 		}
+
 		maxBytes -= bytesRead
 	}
 	return nil

@@ -164,7 +164,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
-	klog.V(2).Infof("Search %q completed with %d results", index.Search[0], count)
+	klog.V(2).Infof("Search %q over %q for job %s completed with %d results", index.Search[0], index.SearchType, index.Job, count)
 
 	stats := o.Stats()
 	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, time.Now().Sub(start).Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))

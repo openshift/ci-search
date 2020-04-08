@@ -131,15 +131,17 @@ func (o *options) Stats() IndexStats {
 
 func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, error) {
 	var args []string
+	var additionalPaths []string
 	switch index.SearchType {
 	case "bug":
 		if o.bugURIPrefix == nil {
 			return nil, nil, fmt.Errorf("searching on bugs is not enabled")
 		}
-		return []string{"--glob", "bug-*", o.bugsPath}, nil, nil
+		return []string{"--glob", "bug-*"}, []string{o.bugsPath}, nil
 	case "all", "bug+junit":
 		if o.bugURIPrefix != nil {
-			args = []string{"--glob", "bug-*", o.bugsPath}
+			args = []string{"--glob", "bug-*"}
+			additionalPaths = []string{o.bugsPath}
 		}
 		fallthrough
 	default:
@@ -158,7 +160,7 @@ func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, erro
 				args = append(args, o.jobsPath)
 			}
 		}
-		return args, paths, nil
+		return args, append(paths, additionalPaths...), nil
 	}
 }
 
