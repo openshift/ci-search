@@ -41,6 +41,11 @@ func (g ripgrepGenerator) Command(index *Index, search string) (string, []string
 	} else {
 		args = append(args, "--context", "0")
 	}
+	if index.MaxMatches > 0 {
+		// always capture at least one more result than requested because rg terminates
+		// its search at the last result and won't return context for that result
+		args = append(args, "--max-count", strconv.Itoa(index.MaxMatches+1))
+	}
 	args = append(args, search)
 	newArgs, paths, err := g.arguments.RipgrepSourceArguments(index)
 	if err != nil {

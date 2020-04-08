@@ -51,6 +51,8 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	index.MaxMatches = 1
+
 	counts := make(map[string]int, len(index.Search))
 	var lastJob string
 	err = executeGrep(req.Context(), o.generator, index, 1, func(name string, search string, matches []bytes.Buffer, moreLines int) {

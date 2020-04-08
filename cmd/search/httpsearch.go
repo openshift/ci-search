@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"regexp"
 	"time"
 
 	"k8s.io/klog"
@@ -52,18 +50,8 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 func (o *options) searchResult(ctx context.Context, index *Index) (map[string]map[string][]*Match, error) {
 	result := map[string]map[string][]*Match{}
 
-	var reJob *regexp.Regexp
-	if index.Job != nil {
-		re, err := regexp.Compile(fmt.Sprintf(`%[1]s[^%[1]s]*%[2]s[^%[1]s]*%[1]s`, string(filepath.Separator), index.Job.String()))
-		if err != nil {
-			return nil, fmt.Errorf("unable to build search path regexp: %v", err)
-		}
-		reJob = re
-	}
-
-	maxMatches := index.MaxMatches
-	if maxMatches == 0 {
-		maxMatches = 25
+	if index.MaxMatches == 0 {
+		index.MaxMatches = 25
 	}
 
 	err := executeGrep(ctx, o.generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
@@ -76,8 +64,8 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			klog.Errorf("Failed to compute job URI for %q", name)
 			return
 		}
-		if reJob != nil && !reJob.MatchString(name) {
-			return
+		if index.Job != nil && !index.Job.MatchString(metadata.Name) {
+			return nil
 		}
 		uri := metadata.URI.String()
 		_, ok := result[uri]

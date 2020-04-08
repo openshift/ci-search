@@ -22,7 +22,7 @@ type Result struct {
 	// Trigger is "pull" or "build".
 	Trigger string
 
-	// Name is the name of the job, e.g. release-openshift-ocp-installer-e2e-aws-4.1 or pull-ci-openshift-origin-master-e2e-aws.
+	// Name is a string to be printed to the user, which might be the job name or bug title
 	Name string
 
 	// Number is the job number, e.g. 309 for origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for origin-ci-test/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.

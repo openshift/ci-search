@@ -9,8 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +64,12 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	if len(index.Search) == 0 {
 		index.Search = []string{""}
+	}
+	if index.MaxMatches == 0 {
+		index.MaxMatches = 50
+	}
+	if index.Context < 0 {
+		index.MaxMatches = 10
 	}
 
 	contextOptions := []string{
@@ -240,23 +244,6 @@ func (w *sortableWriter) Write(buf []byte) (int, error) {
 }
 
 func renderMatches(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
-	var reJob *regexp.Regexp
-	if index.Job != nil {
-		re, err := regexp.Compile(fmt.Sprintf(`%[1]s[^%[1]s]*%[2]s[^%[1]s]*%[1]s`, string(filepath.Separator), index.Job.String()))
-		if err != nil {
-			return 0, fmt.Errorf("unable to build search path regexp: %v", err)
-		}
-		reJob = re
-	}
-
-	maxMatches := index.MaxMatches
-	if maxMatches == 0 {
-		maxMatches = 50
-	}
-	if index.Context < 0 {
-		maxMatches = 10
-	}
-
 	count, lineCount, matchCount := 0, 0, 0
 	lines := make([][]byte, 0, 64)
 
@@ -298,7 +285,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				drop = true
 				return
 			}
-			if reJob != nil && !reJob.MatchString(name) {
+			if index.Job != nil && !index.Job.MatchString(metadata.Name) {
 				drop = true
 				return
 			}
