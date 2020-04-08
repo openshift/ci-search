@@ -103,16 +103,26 @@ func (r *IndexReader) Run(ctx context.Context, handler cache.ResourceEventHandle
 				return nil
 			}
 			statusURL.Path = "/view/gcs/" + strings.TrimPrefix(link, "gs://")
+			deckURL := statusURL.String()
+
+			_, _, jobName, buildID, _, err := jobPathToAttributes(statusURL.Path, deckURL)
+			if err != nil {
+
+			}
 
 			job := &Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "",
 					Name:      fmt.Sprintf("gcs-%d", index),
 				},
+				Spec: JobSpec{
+					Job: jobName,
+				},
 				Status: JobStatus{
 					State:          state,
-					URL:            statusURL.String(),
+					URL:            deckURL,
 					CompletionTime: metav1.Time{time.Unix(completed, 0)},
+					BuildID:        buildID,
 				},
 			}
 			r.add(job)

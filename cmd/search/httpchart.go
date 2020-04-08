@@ -51,16 +51,18 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	index.MaxMatches = 1
+
 	counts := make(map[string]int, len(index.Search))
 	var lastJob string
-	err = executeGrep(req.Context(), o.generator, index, 1, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err = executeGrep(req.Context(), o.generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		metadata, err := o.MetadataFor(name)
 		if err != nil {
 			klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
-			return
+			return nil
 		}
 		if metadata.URI == nil {
-			return
+			return nil
 		}
 
 		uri := metadata.URI.String()
@@ -68,6 +70,7 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 			lastJob = uri
 			counts[search] += 1
 		}
+		return nil
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusBadRequest)

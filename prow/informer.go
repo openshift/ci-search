@@ -100,7 +100,7 @@ func newPeriodicWatcher(lw *ListWatcher, interval time.Duration, rv metav1.Time)
 }
 
 func (w *periodicWatcher) run() {
-	defer klog.V(4).Infof("Watcher exited")
+	defer klog.V(7).Infof("Watcher exited")
 	defer close(w.ch)
 
 	// never watch longer than maxInterval
@@ -121,11 +121,11 @@ func (w *periodicWatcher) Stop() {
 		}
 	}()
 	w.stop()
-	klog.V(4).Infof("Stopped watch")
+	klog.V(7).Infof("Stopped watch")
 }
 
 func (w *periodicWatcher) stop() {
-	klog.V(4).Infof("Stopping watch")
+	klog.V(7).Infof("Stopping watch")
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	if !w.closed {

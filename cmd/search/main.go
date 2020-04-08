@@ -72,6 +72,8 @@ func main() {
 	flag.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
 	flag.StringVar(&opt.BugzillaSearch, "bugzilla-search", opt.BugzillaSearch, "A quicksearch query to search for bugs to index.")
 
+	flag.BoolVar(&opt.NoIndex, "disable-indexing", opt.NoIndex, "Disable all indexing to disk.")
+
 	if err := cmd.Execute(); err != nil {
 		klog.Exitf("error: %v", err)
 	}
@@ -95,6 +97,8 @@ type options struct {
 	BugzillaURL       string
 	BugzillaSearch    string
 	BugzillaTokenPath string
+
+	NoIndex bool
 
 	generator CommandGenerator
 
@@ -322,7 +326,7 @@ func (o *options) Run() error {
 		ctx := context.Background()
 		go informer.Run(ctx.Done())
 		go store.Run(ctx, informer, diskStore)
-		go diskStore.Run(ctx, lister, store)
+		go diskStore.Run(ctx, lister, store, o.NoIndex)
 		klog.Infof("Started indexing bugzilla %s with query %q", o.BugzillaURL, o.BugzillaSearch)
 	} else {
 		o.bugs = bugzilla.NewCommentStore(nil, 0, false)
@@ -391,17 +395,14 @@ func (o *options) Run() error {
 			go indexReader.Run(ctx, h)
 		}
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, o.jobAccessor, indexedPaths, 40)
+		go store.Run(ctx, o.jobAccessor, indexedPaths, o.NoIndex, 40)
 
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}
 
-	if err := indexedPaths.Load(); err != nil {
-		return err
-	}
 	go wait.Forever(func() {
 		if err := indexedPaths.Load(); err != nil {
-			klog.Errorf("Unable to index: %v", err)
+			klog.Fatalf("Unable to index: %v", err)
 		}
 	}, 3*time.Minute)
 

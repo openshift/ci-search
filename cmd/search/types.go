@@ -22,7 +22,7 @@ type Result struct {
 	// Trigger is "pull" or "build".
 	Trigger string
 
-	// Name is the name of the job, e.g. release-openshift-ocp-installer-e2e-aws-4.1 or pull-ci-openshift-origin-master-e2e-aws.
+	// Name is a string to be printed to the user, which might be the job name or bug title
 	Name string
 
 	// Number is the job number, e.g. 309 for origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for origin-ci-test/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.
@@ -48,6 +48,10 @@ type Index struct {
 	// MaxMatches caps the number of individual results within a file
 	// that can be returned.
 	MaxMatches int
+
+	// MaxBytes will terminate a search if the specified number of bytes
+	// are found within matches. An error will be printed.
+	MaxBytes int64
 
 	// Context includes this many lines of context around each match.
 	Context int
@@ -119,6 +123,17 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 			return nil, fmt.Errorf("maxMatches must be a number between 0 and 500")
 		}
 		index.MaxMatches = maxMatches
+	}
+
+	if value := req.FormValue("maxBytes"); len(value) > 0 {
+		maxBytes, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maxBytes < 0 || maxBytes > 100*1024*1024 {
+			return nil, fmt.Errorf("maxMatches must be a number between 0 and 100M")
+		}
+		index.MaxBytes = maxBytes
+	}
+	if index.MaxBytes == 0 {
+		index.MaxBytes = 20 * 1024 * 1024
 	}
 
 	if value := req.FormValue("maxAge"); len(value) > 0 {

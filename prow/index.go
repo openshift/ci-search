@@ -134,7 +134,7 @@ func (s *DiskStore) Handler() cache.ResourceEventHandler {
 	}
 }
 
-func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, workers int) {
+func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, disableWrite bool, workers int) {
 	for i := 0; i < workers; i++ {
 		go func(i int) {
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
@@ -142,6 +142,11 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 				for {
 					obj, done := s.queue.Get()
 					if done {
+						return
+					}
+					if disableWrite {
+						s.queue.Forget(obj)
+						s.queue.Done(obj)
 						return
 					}
 					id, ok := obj.(string)
@@ -190,44 +195,13 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	if err != nil {
 		return nil, fmt.Errorf("job %s has no valid status URL: %v", job.Name, err)
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 5 {
-		return nil, nil
-	}
-	if parts[0] != "view" || parts[1] != "gcs" {
-		return nil, nil
-	}
 
-	bucket := parts[2]
-	switch trigger := parts[3]; trigger {
-	case "logs":
-		parts = parts[3:]
-		switch {
-		case len(parts) == 3:
-		case len(parts) == 4:
-		default:
-			return nil, fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), job.Status.URL)
-		}
-		if _, err := strconv.Atoi(parts[len(parts)-1]); err != nil {
-			return nil, fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), job.Status.URL)
-		}
-	case "pr-logs":
-		parts = parts[3:]
-		switch {
-		case len(parts) == 6 && parts[1] == "pull":
-		case len(parts) == 5 && parts[1] == "pull" && parts[2] == "batch":
-		case len(parts) == 5 && parts[1] == "pull":
-			if _, err := strconv.Atoi(parts[2]); err != nil {
-				return nil, fmt.Errorf("unrecognized pr-logs path %q in %s", strings.Join(parts, "/"), job.Status.URL)
-			}
-		default:
-			return nil, fmt.Errorf("unrecognized pr-logs path %q in %s", strings.Join(parts, "/"), job.Status.URL)
-		}
-		if _, err := strconv.Atoi(parts[len(parts)-1]); err != nil {
-			return nil, fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), job.Status.URL)
-		}
-	default:
-		return nil, fmt.Errorf("unrecognized job prefix type %q in %s", parts[3], job.Status.URL)
+	bucket, _, _, _, parts, err := jobPathToAttributes(u.Path, job.Status.URL)
+	if err != nil {
+		return nil, err
+	}
+	if len(bucket) == 0 {
+		return nil, nil
 	}
 
 	build := Build{
@@ -284,4 +258,65 @@ func (s *DiskStore) Sync() error {
 		}
 		return nil
 	})
+}
+
+func jobPathToAttributes(path, full string) (bucket, trigger, job, buildID string, parts []string, err error) {
+	parts = strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 5 {
+		return
+	}
+	if parts[0] != "view" || parts[1] != "gcs" {
+		return
+	}
+
+	bucket = parts[2]
+	trigger = parts[3]
+	switch trigger {
+	case "logs":
+		parts = parts[3:]
+
+		switch {
+		case len(parts) == 3:
+		case len(parts) == 4:
+		default:
+			err = fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), full)
+			return
+		}
+
+		job = parts[len(parts)-2]
+		buildID = parts[len(parts)-1]
+		if _, pErr := strconv.Atoi(buildID); pErr != nil {
+			err = fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), full)
+			return
+		}
+		return
+
+	case "pr-logs":
+		parts = parts[3:]
+
+		switch {
+		case len(parts) == 6 && parts[1] == "pull":
+		case len(parts) == 5 && parts[1] == "pull" && parts[2] == "batch":
+		case len(parts) == 5 && parts[1] == "pull":
+			if _, pErr := strconv.Atoi(parts[2]); pErr != nil {
+				err = fmt.Errorf("unrecognized pr-logs path %q in %s", strings.Join(parts, "/"), full)
+				return
+			}
+		default:
+			err = fmt.Errorf("unrecognized pr-logs path %q in %s", strings.Join(parts, "/"), full)
+			return
+		}
+
+		job = parts[len(parts)-2]
+		buildID = parts[len(parts)-1]
+		if _, pErr := strconv.Atoi(buildID); pErr != nil {
+			err = fmt.Errorf("unrecognized logs path %q in %s", strings.Join(parts, "/"), full)
+			return
+		}
+		return
+
+	default:
+		err = fmt.Errorf("unrecognized job prefix type %q in %s", parts[3], full)
+		return
+	}
 }

@@ -9,8 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,6 +65,12 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	if len(index.Search) == 0 {
 		index.Search = []string{""}
 	}
+	if index.MaxMatches == 0 {
+		index.MaxMatches = 50
+	}
+	if index.Context < 0 {
+		index.MaxMatches = 10
+	}
 
 	contextOptions := []string{
 		fmt.Sprintf(`<option value="-1" %s>Links</option>`, intSelected(1, index.Context)),
@@ -112,12 +116,17 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
+	var jobRegex string
+	if index.Job != nil {
+		jobRegex = index.Job.String()
+	}
+
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
+	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""), strconv.FormatInt(index.MaxBytes, 10), strconv.Itoa(index.MaxMatches), jobRegex)
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
@@ -240,34 +249,17 @@ func (w *sortableWriter) Write(buf []byte) (int, error) {
 }
 
 func renderMatches(ctx context.Context, w io.Writer, index *Index, generator CommandGenerator, start time.Time, resolver PathResolver) (int, error) {
-	var reJob *regexp.Regexp
-	if index.Job != nil {
-		re, err := regexp.Compile(fmt.Sprintf(`%[1]s[^%[1]s]*%[2]s[^%[1]s]*%[1]s`, string(filepath.Separator), index.Job.String()))
-		if err != nil {
-			return 0, fmt.Errorf("unable to build search path regexp: %v", err)
-		}
-		reJob = re
-	}
-
-	maxMatches := index.MaxMatches
-	if maxMatches == 0 {
-		maxMatches = 50
-	}
-	if index.Context < 0 {
-		maxMatches = 10
-	}
-
 	count, lineCount, matchCount := 0, 0, 0
 	lines := make([][]byte, 0, 64)
 
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
 	drop := true
-	err := executeGrep(ctx, generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		if lastName == name {
 			// continue accumulating matches
 			if drop {
-				return
+				return nil
 			}
 			if index.Context > 0 {
 				fmt.Fprintf(bw, "\n&mdash;\n\n")
@@ -291,16 +283,16 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			if err != nil {
 				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
 				drop = true
-				return
+				return nil
 			}
 			if metadata.URI == nil {
 				klog.Errorf("no job URI for %q", name)
 				drop = true
-				return
+				return nil
 			}
-			if reJob != nil && !reJob.MatchString(name) {
+			if index.Job != nil && !index.Job.MatchString(metadata.Name) {
 				drop = true
-				return
+				return nil
 			}
 
 			var age string
@@ -309,7 +301,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				if !metadata.IgnoreAge && duration > index.MaxAge {
 					klog.V(7).Infof("Filtered %s, older than query limit", name)
 					drop = true
-					return
+					return nil
 				}
 				age = units.HumanDuration(duration) + " ago"
 			}
@@ -337,11 +329,11 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 
 		matchCount++
 		if index.Context < 0 {
-			return
+			return nil
 		}
 
 		// remove empty leading and trailing lines
-		lines = lines[:]
+		lines = lines[:0]
 		for _, m := range matches {
 			line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
 			if len(line) == 0 {
@@ -359,11 +351,14 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 
 		for _, line := range lines {
 			template.HTMLEscape(bw, line)
-			fmt.Fprintln(bw)
+			if _, err := fmt.Fprintln(bw); err != nil {
+				return err
+			}
 		}
 		if moreLines > 0 {
 			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
 		}
+		return nil
 	})
 
 	if !drop {
@@ -382,8 +377,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	return count, err
 }
 
-const htmlPageStart = `
-<!DOCTYPE html>
+const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><title>%s</title>
@@ -412,6 +406,9 @@ const htmlIndexForm = `
 	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="context" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
+	<input type="hidden" name="maxBytes" value="%s">
+	<input type="hidden" name="maxMatches" value="%s">
+	<input type="hidden" name="name" value="%s">
 	<input class="btn" type="submit" value="Search">
 	</div>
 </form>
