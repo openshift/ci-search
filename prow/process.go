@@ -1,6 +1,7 @@
 package prow
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -359,7 +360,7 @@ func (a *LogAccumulator) Finished(ctx context.Context) {
 	if err := os.Chtimes(a.path, at, at); err != nil && !os.IsNotExist(err) {
 		klog.Errorf("Unable to set modification time of %s to %d: %v", a.path, a.finished, err)
 	}
-	for _, file := range []string{"junit.failures", "build-log.txt"} {
+	for _, file := range []string{"junit.failures", "build-log.txt", "build-log.txt.gz"} {
 		_, ok := a.exists[file]
 		if ok {
 			continue
@@ -388,31 +389,40 @@ func (a *LogAccumulator) waitMetadata(ctx context.Context) bool {
 }
 
 func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storage.ObjectAttrs, base string) error {
-	if _, ok := a.exists[base]; ok {
-		return nil
+	for _, s := range []string{base, base + ".gz"} {
+		if _, ok := a.exists[s]; ok {
+			return nil
+		}
 	}
 	if err := os.MkdirAll(a.path, 0755); err != nil {
 		return err
+	}
+	if artifact.Size > 1*1024*1024 {
+		base += ".gz"
 	}
 	f, err := os.Create(filepath.Join(a.path, base))
 	if err != nil {
 		return err
 	}
+	var w io.WriteCloser = f
+	if artifact.Size > 1*1024*1024 {
+		w = gzip.NewWriter(w)
+	}
+
 	h := a.build.Bucket.Object(artifact.Name)
 	r, err := h.NewReader(ctx)
 	if err != nil {
-		f.Close()
+		w.Close()
 		os.Remove(f.Name())
 		return err
 	}
 	defer r.Close()
-	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
+	if _, err := io.Copy(w, r); err != nil {
+		w.Close()
 		os.Remove(f.Name())
 		return err
 	}
-	if err := f.Close(); err != nil {
-		f.Close()
+	if err := w.Close(); err != nil {
 		os.Remove(f.Name())
 		return err
 	}
@@ -420,33 +430,42 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storag
 }
 
 func (a *LogAccumulator) downloadIfMissingTail(ctx context.Context, artifact *storage.ObjectAttrs, base string, length int64) error {
-	if _, ok := a.exists[base]; ok {
-		return nil
+	for _, s := range []string{base, base + ".gz"} {
+		if _, ok := a.exists[s]; ok {
+			return nil
+		}
 	}
 	if err := os.MkdirAll(a.path, 0755); err != nil {
 		return err
+	}
+	if artifact.Size > 1*1024*1024 {
+		base += ".gz"
 	}
 	f, err := os.Create(filepath.Join(a.path, base))
 	if err != nil {
 		return err
 	}
+	var w io.WriteCloser = f
+	if artifact.Size > 1*1024*1024 {
+		w = gzip.NewWriter(w)
+	}
+
 	h := a.build.Bucket.Object(artifact.Name)
 
 	var r *storage.Reader
 	r, err = h.NewRangeReader(ctx, -length, -1)
 	if err != nil {
-		f.Close()
+		w.Close()
 		os.Remove(f.Name())
 		return err
 	}
 	defer r.Close()
-	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
+	if _, err := io.Copy(w, r); err != nil {
+		w.Close()
 		os.Remove(f.Name())
 		return err
 	}
-	if err := f.Close(); err != nil {
-		f.Close()
+	if err := w.Close(); err != nil {
 		os.Remove(f.Name())
 		return err
 	}
