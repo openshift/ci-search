@@ -116,12 +116,17 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
+	var jobRegex string
+	if index.Job != nil {
+		jobRegex = index.Job.String()
+	}
+
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""))
+	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""), strconv.FormatInt(index.MaxBytes, 10), strconv.Itoa(index.MaxMatches), jobRegex)
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
@@ -401,6 +406,9 @@ const htmlIndexForm = `
 	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="context" class="form-control col-1" onchange="this.form.submit();">%s</select>
 	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
+	<input type="hidden" name="maxBytes" value="%s">
+	<input type="hidden" name="maxMatches" value="%s">
+	<input type="hidden" name="name" value="%s">
 	<input class="btn" type="submit" value="Search">
 	</div>
 </form>
