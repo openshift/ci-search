@@ -174,6 +174,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 		draw.DrawMask(img, bounds, &image.Uniform{clr}, image.ZP, scatter, image.ZP, draw.Over)
 	}
 
+	w.Header().Set("Cache-Control", "public,max-age=30")
 	w.Header().Set("Content-Type", "image/png")
 	if err = png.Encode(w, img); err != nil {
 		klog.Errorf("Failed to write response: %v", err)

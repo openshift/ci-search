@@ -51,7 +51,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 	result := map[string]map[string][]*Match{}
 
 	if index.MaxMatches == 0 {
-		index.MaxMatches = 25
+		index.MaxMatches = 1
 	}
 
 	err := executeGrep(ctx, o.generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
