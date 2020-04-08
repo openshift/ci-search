@@ -341,7 +341,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 		}
 
 		// remove empty leading and trailing lines
-		lines = lines[:]
+		lines = lines[:0]
 		for _, m := range matches {
 			line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
 			if len(line) == 0 {
@@ -382,8 +382,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	return count, err
 }
 
-const htmlPageStart = `
-<!DOCTYPE html>
+const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><title>%s</title>
