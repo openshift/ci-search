@@ -55,6 +55,9 @@ type Index struct {
 
 	// Context includes this many lines of context around each match.
 	Context int
+
+	// WrapLines instructs the renderer to use wrapped lines
+	WrapLines bool
 }
 
 func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index, error) {
@@ -152,6 +155,10 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		index.MaxAge = maxAge
 	}
 
+	if value := req.FormValue("wrap"); len(value) > 0 {
+		index.WrapLines = true
+	}
+
 	if context := req.FormValue("context"); len(context) > 0 {
 		num, err := strconv.Atoi(context)
 		if err != nil || num < -1 || num > 15 {
@@ -159,7 +166,7 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		}
 		index.Context = num
 	} else if mode == "text" {
-		index.Context = 2
+		index.Context = 1
 	}
 
 	return index, nil

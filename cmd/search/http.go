@@ -66,10 +66,10 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		index.Search = []string{""}
 	}
 	if index.MaxMatches == 0 {
-		index.MaxMatches = 50
+		index.MaxMatches = 5
 	}
 	if index.Context < 0 {
-		index.MaxMatches = 10
+		index.MaxMatches = 1
 	}
 
 	contextOptions := []string{
@@ -125,13 +125,30 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI")
-	fmt.Fprintf(writer, htmlIndexForm, template.HTMLEscapeString(index.Search[0]), strings.Join(maxAgeOptions, ""), strings.Join(contextOptions, ""), strings.Join(searchTypeOptions, ""), strconv.FormatInt(index.MaxBytes, 10), strconv.Itoa(index.MaxMatches), jobRegex)
+	var wrapValue string
+	nowrapClass := "nowrap"
+	if index.WrapLines {
+		wrapValue = "true"
+		nowrapClass = ""
+	}
+
+	fmt.Fprintf(writer, htmlPageStart, "Search OpenShift CI", nowrapClass)
+	fmt.Fprintf(writer, htmlIndexForm,
+		template.HTMLEscapeString(index.Search[0]),
+		strings.Join(maxAgeOptions, ""),
+
+		strings.Join(contextOptions, ""),
+		strings.Join(searchTypeOptions, ""),
+		jobRegex,
+		strconv.Itoa(index.MaxMatches),
+		strconv.FormatInt(index.MaxBytes, 10),
+		wrapValue,
+	)
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
 		stats := o.Stats()
-		fmt.Fprintf(writer, htmlEmptyPage, units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs)
+		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
@@ -150,7 +167,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	klog.V(2).Infof("Search %q completed with %d results", index.Search[0], count)
 
 	stats := o.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">home</a> | <a href="/chart?%s">chart view</a> - <a href="#" onclick="document.getElementById('results').classList.toggle('nowrap')">toggle line wrapping</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, time.Now().Sub(start).Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
+	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, time.Now().Sub(start).Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
 	if count == 0 {
 		fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
 	}
@@ -381,7 +398,7 @@ const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><title>%s</title>
-<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <style>
 #results.nowrap PRE { white-space: pre; }
@@ -391,7 +408,7 @@ const htmlPageStart = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="results" class="container-fluid">
+<div id="results" class="container-fluid %s">
 `
 
 const htmlPageEnd = `
@@ -402,21 +419,29 @@ const htmlPageEnd = `
 
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
-	<div class="input-group input-group-lg"><input autocomplete="off" autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
-	<select name="maxAge" class="form-control col-1" onchange="this.form.submit();">%s</select>
-	<select name="context" class="form-control col-1" onchange="this.form.submit();">%s</select>
-	<select name="type" class="form-control col-1" onchange="this.form.submit();">%s</select>
-	<input type="hidden" name="maxBytes" value="%s">
-	<input type="hidden" name="maxMatches" value="%s">
-	<input type="hidden" name="name" value="%s">
-	<input class="btn" type="submit" value="Search">
+	<div class="input-group input-group-lg mb-2">
+		<input autocomplete="off" autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
+		<select name="maxAge" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<select name="context" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<select name="type" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<div class="input-group-append"><input class="btn btn-outline-primary" type="submit" value="Search"></div>
+	</div>
+	<div class="input-group input-group-sm mb-3">
+		<div class="input-group-prepend"><span class="input-group-text" for="name">Job:</span></div>
+		<input class="form-control col-auto" name="name" value="%s" placeholder="Filter job or bug names by regex ...">
+		<input autocomplete="off" class="form-control col-1" name="maxMatches" value="%s" placeholder="Max matches per job or bug">
+		<input autocomplete="off" class="form-control col-1" name="maxBytes" value="%s" placeholder="Max bytes to return">
+		<div class="input-group-append"><span class="input-group-text">
+			<input id="wrap" type="checkbox" name="wrap" value="%s" onchange="document.getElementById('results').classList.toggle('nowrap')">
+			<label for="wrap" style="margin-bottom: 0; margin-left: 0.4em;">Wrap lines</label>
+		</span></div>
 	</div>
 </form>
 `
 
 const htmlEmptyPage = `
 <div class="ml-3" style="margin-top: 3rem; color: #666;">
-<p>Find bugs and test failures from <a href="/config">CI jobs</a> in <a target="_blank" href="https://deck-ci.svc.ci.openshift.org">OpenShift CI</a>.</p>
+<p>Find bugs and test failures from failed or flaky CI jobs in <a target="_blank" href="%s">OpenShift CI</a>.</p>
 <p>The search input will use <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a>.</p>
 <p>Searches are case-insensitive (using ripgrep "smart casing")</p>
 <p>Examples:
@@ -427,6 +452,11 @@ const htmlEmptyPage = `
 </ul>
 <p>You can alter the age of results to search with the dropdown next to the search bar. Note that older results are pruned and may not be available after 14 days.</p>
 <p>The amount of surrounding text returned with each match can be changed, including none.
+<p>You may filter by job name using regex controls:
+<ul>
+<li><code>^release-</code> - all jobs that start with 'release-'</li>
+<li><code>UpgradeBlocker</code> - bugs that have 'UpgradeBlocker' in their title</li>
+</ul>
 <p>Currently indexing %s across %d results and %d bugs</p>
 </div>
 `
