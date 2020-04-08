@@ -134,7 +134,7 @@ func (s *DiskStore) Handler() cache.ResourceEventHandler {
 	}
 }
 
-func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, workers int) {
+func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, disableWrite bool, workers int) {
 	for i := 0; i < workers; i++ {
 		go func(i int) {
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
@@ -142,6 +142,11 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 				for {
 					obj, done := s.queue.Get()
 					if done {
+						return
+					}
+					if disableWrite {
+						s.queue.Forget(obj)
+						s.queue.Done(obj)
 						return
 					}
 					id, ok := obj.(string)

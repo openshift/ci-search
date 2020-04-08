@@ -39,12 +39,16 @@ func NewCommentDiskStore(path string, maxAge time.Duration) *CommentDiskStore {
 	}
 }
 
-func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store CommentAccessor) {
+func (s *CommentDiskStore) Run(ctx context.Context, lister *BugLister, store CommentAccessor, disableWrite bool) {
 	defer klog.V(2).Infof("Comment disk worker exited")
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
 		for {
 			obj, done := s.queue.Get()
 			if done {
+				return
+			}
+			if disableWrite {
+				s.queue.Done(obj)
 				return
 			}
 			id, err := strconv.Atoi(obj.(string))
