@@ -54,15 +54,15 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 		index.MaxMatches = 25
 	}
 
-	err := executeGrep(ctx, o.generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, o.generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		metadata, err := o.MetadataFor(name)
 		if err != nil {
 			klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
-			return
+			return nil
 		}
 		if metadata.URI == nil {
 			klog.Errorf("Failed to compute job URI for %q", name)
-			return
+			return nil
 		}
 		if index.Job != nil && !index.Job.MatchString(metadata.Name) {
 			return nil
@@ -88,6 +88,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			match.Context = append(match.Context, string(line))
 		}
 		result[uri][search] = append(result[uri][search], match)
+		return nil
 	})
 
 	return result, err

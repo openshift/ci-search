@@ -49,6 +49,10 @@ type Index struct {
 	// that can be returned.
 	MaxMatches int
 
+	// MaxBytes will terminate a search if the specified number of bytes
+	// are found within matches. An error will be printed.
+	MaxBytes int64
+
 	// Context includes this many lines of context around each match.
 	Context int
 }
@@ -119,6 +123,17 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 			return nil, fmt.Errorf("maxMatches must be a number between 0 and 500")
 		}
 		index.MaxMatches = maxMatches
+	}
+
+	if value := req.FormValue("maxBytes"); len(value) > 0 {
+		maxBytes, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maxBytes < 0 || maxBytes > 100*1024*1024 {
+			return nil, fmt.Errorf("maxMatches must be a number between 0 and 100M")
+		}
+		index.MaxBytes = maxBytes
+	}
+	if index.MaxBytes == 0 {
+		index.MaxBytes = 20 * 1024 * 1024
 	}
 
 	if value := req.FormValue("maxAge"); len(value) > 0 {

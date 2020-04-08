@@ -17,6 +17,8 @@ import (
 	"k8s.io/klog"
 )
 
+var ErrMaxBytes = fmt.Errorf("reached maximum search length, more results not shown")
+
 type CommandGenerator interface {
 	Command(index *Index, search string) (cmd string, args []string, paths []string, err error)
 	PathPrefix() string
@@ -66,6 +68,8 @@ func NewCommandGenerator(searchPath string, arguments RipgrepSourceArguments) (C
 	return nil, fmt.Errorf("could not find 'rg' on the path")
 }
 
+type GrepFunc func(name string, search string, lines []bytes.Buffer, moreLines int) error
+
 // executeGrep search for matches to index and, for each match found,
 // calls fn with the following arguments:
 //
@@ -75,10 +79,10 @@ func NewCommandGenerator(searchPath string, arguments RipgrepSourceArguments) (C
 // * lines, the match with its surrounding context.
 // * moreLines, the number of elided lines, when the match and context
 //   is truncated due to excessive length.
-func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
+func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, fn GrepFunc) error {
 	// FIXME: parallelize this
 	for _, search := range index.Search {
-		if err := executeGrepSingle(ctx, gen, index, search, maxLines, fn); err != nil {
+		if err := executeGrepSingle(ctx, gen, index, search, fn); err != nil {
 			return err
 		}
 	}
@@ -104,7 +108,7 @@ func splitStringSliceByLength(arr []string, maxLength int) ([]string, []string) 
 	return arr, nil
 }
 
-func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
+func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, fn GrepFunc) error {
 	commandPath, commandArgs, commandPaths, err := gen.Command(index, search)
 	if err != nil {
 		return err
@@ -121,6 +125,7 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 	for _, arg := range commandArgs {
 		maxArgs -= len(arg) + 1
 	}
+	maxBytes := index.MaxBytes
 
 	pathPrefix := gen.PathPrefix()
 
@@ -134,31 +139,35 @@ func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, 
 			return fmt.Errorf("argument longer than maximum shell length")
 		}
 		cmd.Args = append(commandArgs, args...)
-		if err := runSingleCommand(ctx, cmd, pathPrefix, index, search, maxLines, fn); err != nil && err != io.EOF {
+		bytesRead, err := runSingleCommand(ctx, cmd, pathPrefix, index, maxBytes, search, fn)
+		if err != nil && err != io.EOF {
 			if strings.Contains(err.Error(), "argument list too long") {
 				return fmt.Errorf("arguments too long: %d bytes", estimateLength(cmd.Args))
 			}
 			return err
 		}
+		maxBytes -= bytesRead
 	}
 	return nil
 }
 
-func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, index *Index, search string, maxLines int, fn func(name string, search string, lines []bytes.Buffer, moreLines int)) error {
+func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, index *Index, maxBytes int64, search string, fn GrepFunc) (int64, error) {
 	errOut := &bytes.Buffer{}
 	cmd.Stderr = errOut
 	pr, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return 0, err
 	}
+
+	maxLines := index.MaxMatches
 
 	br := bufio.NewReaderSize(pr, 512*1024)
 	filename := bytes.NewBuffer(make([]byte, 1024))
-	bytesRead := 0
+	bytesRead := int64(0)
 	linesRead := 0
 	matches := 0
 	match := make([]bytes.Buffer, maxLines)
@@ -184,8 +193,7 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 		hidden := (line) - len(result)
 		klog.V(7).Infof("Captured %d lines for %s, %d not shown", line, path, hidden)
 		matches++
-		fn(filepath.ToSlash(relPath), search, result, hidden)
-		return nil
+		return fn(filepath.ToSlash(relPath), search, result, hidden)
 	}
 
 	defer func() {
@@ -206,10 +214,10 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 
 	chunk, isPrefix, err := br.ReadLine()
 	if err != nil {
-		return err
+		return bytesRead, err
 	}
 	position := 0
-	bytesRead += len(chunk)
+	bytesRead += int64(len(chunk))
 	for {
 		linesRead++
 		isMatchLine := len(chunk) != 2 || chunk[0] != '-' || !bytes.Equal(chunk, []byte("--"))
@@ -222,7 +230,7 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 				if len(chunk) > 140 {
 					chunk = chunk[:140]
 				}
-				return fmt.Errorf("command returned an unexpected empty line at position %d, %d (bytes=%d): %q", position, linesRead, bytesRead, string(chunk))
+				return bytesRead, fmt.Errorf("command returned an unexpected empty line at position %d, %d (bytes=%d): %q", position, linesRead, bytesRead, string(chunk))
 			}
 			// initialize the filename
 			nextFilename = chunk[:filenameEnd+1]
@@ -243,7 +251,10 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 		case !isMatchLine || !bytes.Equal(nextFilename, filename.Bytes()):
 			// filename from current line doesn't match previous filename, so we flush the match to the caller
 			if err := send(); err != nil {
-				return err
+				return bytesRead, err
+			}
+			if bytesRead > maxBytes {
+				return bytesRead, ErrMaxBytes
 			}
 
 			line = 0
@@ -273,11 +284,11 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 			chunk, isPrefix, err = br.ReadLine()
 			if err != nil {
 				if err := send(); err != nil {
-					return err
+					return bytesRead, err
 				}
-				return err
+				return bytesRead, err
 			}
-			bytesRead += len(chunk)
+			bytesRead += int64(len(chunk))
 		}
 
 		// read next line
@@ -285,10 +296,10 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 		chunk, isPrefix, err = br.ReadLine()
 		if err != nil {
 			if err := send(); err != nil {
-				return err
+				return bytesRead, err
 			}
-			return err
+			return bytesRead, err
 		}
-		bytesRead += len(chunk)
+		bytesRead += int64(len(chunk))
 	}
 }

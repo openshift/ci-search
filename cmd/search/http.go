@@ -250,11 +250,11 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
 	drop := true
-	err := executeGrep(ctx, generator, index, maxMatches, func(name string, search string, matches []bytes.Buffer, moreLines int) {
+	err := executeGrep(ctx, generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		if lastName == name {
 			// continue accumulating matches
 			if drop {
-				return
+				return nil
 			}
 			if index.Context > 0 {
 				fmt.Fprintf(bw, "\n&mdash;\n\n")
@@ -278,16 +278,16 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			if err != nil {
 				klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
 				drop = true
-				return
+				return nil
 			}
 			if metadata.URI == nil {
 				klog.Errorf("no job URI for %q", name)
 				drop = true
-				return
+				return nil
 			}
 			if index.Job != nil && !index.Job.MatchString(metadata.Name) {
 				drop = true
-				return
+				return nil
 			}
 
 			var age string
@@ -296,7 +296,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				if !metadata.IgnoreAge && duration > index.MaxAge {
 					klog.V(7).Infof("Filtered %s, older than query limit", name)
 					drop = true
-					return
+					return nil
 				}
 				age = units.HumanDuration(duration) + " ago"
 			}
@@ -324,7 +324,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 
 		matchCount++
 		if index.Context < 0 {
-			return
+			return nil
 		}
 
 		// remove empty leading and trailing lines
@@ -346,11 +346,14 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 
 		for _, line := range lines {
 			template.HTMLEscape(bw, line)
-			fmt.Fprintln(bw)
+			if _, err := fmt.Fprintln(bw); err != nil {
+				return err
+			}
 		}
 		if moreLines > 0 {
 			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
 		}
+		return nil
 	})
 
 	if !drop {
