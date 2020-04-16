@@ -138,7 +138,7 @@ func ListBuilds(ctx context.Context, client *storage.Client, path Path) (Builds,
 }
 
 // junit_CONTEXT_TIMESTAMP_THREAD.xml
-var re = regexp.MustCompile(`.+/junit(_[^_]+)?(_\d+-\d+)?(_\d+)?\.xml$`)
+var re = regexp.MustCompile(`./junit(_[^_]+)?(_\d+-\d+)?(_\d+)?\.xml$`)
 
 // dropPrefix removes the _ in _CONTEXT to help keep the regexp simple
 func dropPrefix(name string) string {
@@ -146,6 +146,10 @@ func dropPrefix(name string) string {
 		return name
 	}
 	return name[1:]
+}
+
+func matchesSuite(obj *storage.ObjectAttrs) bool {
+	return re.MatchString(obj.Name)
 }
 
 // parseSuitesMeta returns the metadata for this junit file (nil for a non-junit file).
@@ -258,9 +262,9 @@ func readSuites(ctx context.Context, obj *storage.ObjectHandle) (*junit.Suites, 
 
 // SuitesMeta holds testsuites xml and metadata from the filename
 type SuitesMeta struct {
-	Suites   junit.Suites      // suites data extracted from file contents
-	Metadata map[string]string // metadata extracted from path name
-	Path     string
+	Suites junit.Suites // suites data extracted from file contents
+	//Metadata map[string]string // metadata extracted from path name
+	Path string
 }
 
 // Suites takes a channel of artifact names, parses those representing junit suites, writing the result to the suites channel.
@@ -273,14 +277,13 @@ func (build Build) Suites(artifacts <-chan *storage.ObjectAttrs, suites chan<- S
 	ctx, cancel := context.WithCancel(build.Context)
 	defer cancel()
 	for art := range artifacts {
-		meta := parseSuitesMeta(art)
-		if meta == nil {
+		if !matchesSuite(art) {
 			continue // not a junit file ignore it, ignore it
 		}
 		wg.Add(1)
 		// concurrently parse each file because there may be a lot of them, and
 		// each takes a non-trivial amount of time waiting for the network.
-		go func(art string, meta map[string]string) {
+		go func(art string, _ map[string]string) {
 			defer wg.Done()
 			suitesData, err := readSuites(ctx, build.Bucket.Object(art))
 			if err != nil {
@@ -291,15 +294,15 @@ func (build Build) Suites(artifacts <-chan *storage.ObjectAttrs, suites chan<- S
 				return
 			}
 			out := SuitesMeta{
-				Suites:   *suitesData,
-				Metadata: meta,
-				Path:     "gs://" + build.BucketPath + "/" + art,
+				Suites: *suitesData,
+				//Metadata: meta,
+				Path: "gs://" + build.BucketPath + "/" + art,
 			}
 			select {
 			case <-ctx.Done():
 			case suites <- out:
 			}
-		}(art.Name, meta)
+		}(art.Name, nil)
 	}
 
 	go func() {

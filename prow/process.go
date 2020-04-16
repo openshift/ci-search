@@ -33,7 +33,7 @@ type Summarizer interface {
 
 type Accumulator interface {
 	Artifacts(context.Context, <-chan *storage.ObjectAttrs, chan<- *storage.ObjectAttrs) error
-	AddSuites(context.Context, junit.Suites, map[string]string)
+	AddSuites(context.Context, junit.Suites)
 	AddMetadata(context.Context, *gcs.Started, *gcs.Finished) (ok bool, err error)
 	Finished(context.Context)
 
@@ -134,7 +134,7 @@ func ReadBuild(inputBuild Build, acc Accumulator) error {
 	go func() {
 		defer wg.Done()
 		for suitesMeta := range suitesChan {
-			acc.AddSuites(ctx, suitesMeta.Suites, suitesMeta.Metadata)
+			acc.AddSuites(ctx, suitesMeta.Suites)
 		}
 	}()
 
@@ -279,7 +279,7 @@ func (t *fileTail) Write(path string) error {
 	return nil
 }
 
-func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites, meta map[string]string) {
+func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites) {
 	if _, ok := a.exists["junit.failures"]; ok {
 		return
 	}
