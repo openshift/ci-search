@@ -9,7 +9,7 @@ type JobList struct {
 	metav1.TypeMeta
 	metav1.ListMeta
 
-	Items []Job `json:"items"`
+	Items []*Job `json:"items"`
 }
 
 type Job struct {
@@ -26,6 +26,7 @@ type JobSpec struct {
 }
 
 type JobStatus struct {
+	// Valid states are "aborted", "error", "failure", "success"
 	State          string      `json:"state"`
 	StartTime      metav1.Time `json:"startTime"`
 	CompletionTime metav1.Time `json:"completionTime"`
@@ -42,9 +43,9 @@ func (j Job) DeepCopyObject() runtime.Object {
 func (j *JobList) DeepCopyObject() runtime.Object {
 	copied := *j
 	if j.Items != nil {
-		copied.Items = make([]Job, len(j.Items))
+		copied.Items = make([]*Job, len(j.Items))
 		for i := range j.Items {
-			copied.Items[i] = *j.Items[i].DeepCopyObject().(*Job)
+			copied.Items[i] = j.Items[i].DeepCopyObject().(*Job)
 		}
 	}
 	return &copied

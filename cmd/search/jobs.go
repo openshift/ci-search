@@ -40,10 +40,7 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 		}
 		return jTime.Before(iTime)
 	})
-	list := prow.JobList{Items: make([]prow.Job, 0, len(jobs))}
-	for _, job := range jobs {
-		list.Items = append(list.Items, *job)
-	}
+	list := prow.JobList{Items: jobs}
 	data, err := json.Marshal(list)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write jobs: %v", err), http.StatusInternalServerError)

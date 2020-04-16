@@ -39,7 +39,7 @@ func (c *Client) newRequestValues() url.Values {
 	return v
 }
 
-func (c *Client) ListJobs(ctx context.Context) (*JobList, error) {
+func (c *Client) ListJobs(ctx context.Context) ([]*Job, error) {
 	u := c.Base
 	v := c.newRequestValues()
 	u.RawQuery = v.Encode()
@@ -51,7 +51,10 @@ func (c *Client) ListJobs(ctx context.Context) (*JobList, error) {
 		c.addRequestHeaders(req)
 		return list, req, err
 	})
-	return list, err
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
 }
 
 func readJSONIntoObject(ctx context.Context, retries int, client *http.Client, fn func() (interface{}, *http.Request, error)) error {

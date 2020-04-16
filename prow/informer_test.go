@@ -25,7 +25,7 @@ func TestInformer(t *testing.T) {
 	}
 	c.Client = &http.Client{Transport: rt}
 
-	informer := NewInformer(c, 30*time.Second, 10*time.Minute)
+	informer := NewInformer(30*time.Second, 10*time.Minute, c)
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			if job, ok := obj.(*Job); ok {

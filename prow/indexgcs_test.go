@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 )
 
@@ -39,17 +37,9 @@ func Test_IndexReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := NewIndexReader(client, "origin-ci-test", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.svc.ci.openshift.org"})
-	r.rateLimiter = rate.NewLimiter(rate.Every(10*time.Second), 1)
-	if err := r.Run(context.Background(), cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			job, ok := obj.(*Job)
-			if !ok {
-				t.Fatalf("unexpected: %T", obj)
-			}
-			klog.Infof("%#v", job)
-		},
-	}); err != nil {
+	r, err := ReadFromIndex(context.Background(), client, "origin-ci-test", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.svc.ci.openshift.org"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("%#v", r)
 }

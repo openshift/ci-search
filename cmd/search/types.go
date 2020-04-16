@@ -16,7 +16,7 @@ type Result struct {
 	// URI is the job detail page, e.g. https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
 	URI *url.URL
 
-	// FileType is the type of file where the match was found, e.g. "build-log" or "junit".
+	// FileType is the type of file where the match was found: "bug", "build-log" or "junit".
 	FileType string
 
 	// Trigger is "pull" or "build".
@@ -58,6 +58,10 @@ type Index struct {
 
 	// WrapLines instructs the renderer to use wrapped lines
 	WrapLines bool
+
+	// GroupByJob will batch results by the job and display data about match
+	// rate and failure rates.
+	GroupByJob bool
 }
 
 func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index, error) {
@@ -157,6 +161,9 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 
 	if value := req.FormValue("wrap"); len(value) > 0 {
 		index.WrapLines = true
+	}
+	if value := req.FormValue("groupBy"); value != "none" {
+		index.GroupByJob = true
 	}
 
 	if context := req.FormValue("context"); len(context) > 0 {

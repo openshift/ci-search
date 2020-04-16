@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/walk"
@@ -199,7 +200,7 @@ func (i *pathIndex) Stats() PathIndexStats {
 	return i.stats
 }
 
-func (i *pathIndex) SearchPaths(index *Index) ([]string, error) {
+func (i *pathIndex) SearchPaths(index *Index, jobNames sets.String) ([]string, error) {
 	// if there are no search targets return nil
 	names := i.FilenamesForSearchType(index.SearchType)
 	if len(names) == 0 {
@@ -237,6 +238,9 @@ func (i *pathIndex) SearchPaths(index *Index) ([]string, error) {
 						jobName := path.path[k+1 : j]
 						if !index.Job.MatchString(jobName) {
 							continue
+						}
+						if jobNames != nil {
+							jobNames.Insert(jobName)
 						}
 					}
 				}
