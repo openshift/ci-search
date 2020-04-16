@@ -46,7 +46,11 @@ func (g ripgrepGenerator) Command(index *Index, search string) (string, []string
 	if index.MaxMatches > 0 {
 		// always capture at least one more result than requested because rg terminates
 		// its search at the last result and won't return context for that result
-		args = append(args, "--max-count", strconv.Itoa(index.MaxMatches+1))
+		if index.Context > 0 {
+			args = append(args, "--max-count", strconv.Itoa(index.MaxMatches+1))
+		} else {
+			args = append(args, "--max-count", strconv.Itoa(index.MaxMatches))
+		}
 	}
 	args = append(args, search)
 	newArgs, paths, err := g.arguments.RipgrepSourceArguments(index)
@@ -164,6 +168,9 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 	}
 
 	maxLines := index.MaxMatches
+	if index.Context > 0 {
+		maxLines *= (index.Context*2 + 1)
+	}
 
 	br := bufio.NewReaderSize(pr, 512*1024)
 	filename := bytes.NewBuffer(make([]byte, 1024))
