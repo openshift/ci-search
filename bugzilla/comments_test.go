@@ -49,7 +49,7 @@ func TestCommentStore(t *testing.T) {
 
 	go informer.Run(ctx.Done())
 	go store.Run(ctx, informer, diskStore)
-	go diskStore.Run(ctx, lister, store)
+	go diskStore.Run(ctx, lister, store, false)
 
 	klog.Infof("waiting for caches to sync")
 	cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
