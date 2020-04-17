@@ -69,7 +69,7 @@ func (s *Lister) JobStats(name string, names sets.String, from, to time.Time) Jo
 			if !ok {
 				continue
 			}
-			if names != nil && !names.Has(job.Spec.Job) {
+			if names.Len() != 0 && !names.Has(job.Spec.Job) {
 				continue
 			}
 			if job.Status.CompletionTime.Time.Before(from) || job.Status.CompletionTime.Time.After(to) {
