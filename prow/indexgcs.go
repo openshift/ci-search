@@ -7,145 +7,104 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/storage"
-	"golang.org/x/time/rate"
 	"google.golang.org/api/iterator"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 )
 
-type IndexReader struct {
-	client      *storage.Client
-	bucket      string
-	index       string
-	maxAge      time.Duration
-	statusURL   url.URL
-	rateLimiter *rate.Limiter
+type ListerFunc func(ctx context.Context) ([]*Job, error)
 
-	lock  sync.Mutex
-	items map[string]*Job
+func (l ListerFunc) ListJobs(ctx context.Context) ([]*Job, error) { return l(ctx) }
+
+type CachingLister struct {
+	Lister JobLister
+	jobs   []*Job
 }
 
-func NewIndexReader(client *storage.Client, bucket, index string, maxAge time.Duration, statusURL url.URL) *IndexReader {
-	return &IndexReader{
-		client:      client,
-		bucket:      bucket,
-		index:       index,
-		maxAge:      maxAge,
-		statusURL:   statusURL,
-		rateLimiter: rate.NewLimiter(rate.Every(30*time.Second), 0),
-
-		items: make(map[string]*Job),
-	}
-}
-
-func (r *IndexReader) Get(name string) (*Job, error) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	job, ok := r.items[name]
-	if !ok {
-		return nil, errors.NewNotFound(prowGR, name)
-	}
-	return job, nil
-}
-
-func (r *IndexReader) List(labels.Selector) ([]*Job, error) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	copied := make([]*Job, 0, len(r.items))
-	for _, job := range r.items {
-		copied = append(copied, job)
-	}
-	return copied, nil
-}
-
-func (r *IndexReader) add(job *Job) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	r.items[fmt.Sprintf("%s/%s", job.Namespace, job.Name)] = job
-}
-
-func (r *IndexReader) Run(ctx context.Context, handler cache.ResourceEventHandler) error {
-	var index int
-	statusURL := r.statusURL
-	end := time.Now()
-	for {
-		start := end.Add(-24 * time.Hour)
-		if err := readJobRange(ctx, r.client.Bucket(r.bucket), r.index, start, end, func(attr *storage.ObjectAttrs) error {
-			link, ok := attr.Metadata["link"]
-			if !ok {
-				return nil
-			}
-			state, ok := attr.Metadata["state"]
-			if !ok {
-				return nil
-			}
-			completedString, ok := attr.Metadata["completed"]
-			if !ok {
-				return nil
-			}
-			completed, err := strconv.ParseInt(completedString, 10, 64)
-			if err != nil {
-				return nil
-			}
-			switch state {
-			case "success":
-			case "failed":
-				state = "failure"
-			case "error":
-			default:
-				return nil
-			}
-			statusURL.Path = "/view/gcs/" + strings.TrimPrefix(link, "gs://")
-			deckURL := statusURL.String()
-
-			_, _, jobName, buildID, _, err := jobPathToAttributes(statusURL.Path, deckURL)
-			if err != nil {
-
-			}
-
-			job := &Job{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "",
-					Name:      fmt.Sprintf("gcs-%d", index),
-				},
-				Spec: JobSpec{
-					Job: jobName,
-				},
-				Status: JobStatus{
-					State:          state,
-					URL:            deckURL,
-					CompletionTime: metav1.Time{time.Unix(completed, 0)},
-					BuildID:        buildID,
-				},
-			}
-			r.add(job)
-			handler.OnAdd(job)
-
-			index++
-			return nil
-		}); err != nil {
-			if err == ctx.Err() {
-				return err
-			}
-			klog.Errorf("scan failed, will retry: %v", err)
-		} else {
-
-			end = start
-			if r.maxAge > 0 && time.Now().Add(-r.maxAge).After(end) {
-				break
-			}
+func (l *CachingLister) ListJobs(ctx context.Context) ([]*Job, error) {
+	if l.jobs == nil {
+		var err error
+		jobs, err := l.Lister.ListJobs(ctx)
+		if err != nil {
+			return nil, err
 		}
-		r.rateLimiter.Wait(ctx)
+		l.jobs = jobs
+		return jobs, nil
 	}
-	klog.Infof("Completed scan to max age")
-	return nil
+	return l.jobs, nil
+}
+
+// ReadFromIndex reads jobs from the named GCS bucket index (managed by a cloud function that watches for finished jobs) and returns
+// them. Jobs older than maxAge are not loaded. statusURL will form the status URL for a given job if the job's link attribute in the
+// index can be parsed.
+func ReadFromIndex(ctx context.Context, client *storage.Client, bucket, index string, maxAge time.Duration, statusURL url.URL) ([]*Job, error) {
+	start := time.Now()
+	jobs := make([]*Job, 0, 2048)
+
+	i := 0
+	if err := readJobRange(ctx, client.Bucket(bucket), index, start.Add(-maxAge), start, func(attr *storage.ObjectAttrs) error {
+		link, ok := attr.Metadata["link"]
+		if !ok {
+			return nil
+		}
+		state, ok := attr.Metadata["state"]
+		if !ok {
+			return nil
+		}
+		completedString, ok := attr.Metadata["completed"]
+		if !ok {
+			return nil
+		}
+		completed, err := strconv.ParseInt(completedString, 10, 64)
+		if err != nil {
+			return nil
+		}
+		switch state {
+		case "success":
+		case "failed":
+			state = "failure"
+		case "error":
+		default:
+			return nil
+		}
+		statusURL.Path = "/view/gcs/" + strings.TrimPrefix(link, "gs://")
+		deckURL := statusURL.String()
+
+		_, _, jobName, buildID, _, err := jobPathToAttributes(statusURL.Path, deckURL)
+		if err != nil {
+			klog.V(7).Infof("Unable to parse indexed link to a valid job: %s", link)
+			return nil
+		}
+
+		i++
+		job := &Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "",
+				Name:      fmt.Sprintf("gcs-%d", i),
+			},
+			Spec: JobSpec{
+				Job: jobName,
+			},
+			Status: JobStatus{
+				State:          state,
+				URL:            deckURL,
+				CompletionTime: metav1.Time{Time: time.Unix(completed, 0)},
+				BuildID:        buildID,
+			},
+		}
+		jobs = append(jobs, job)
+		return nil
+	}); err != nil {
+		if err == ctx.Err() {
+			return nil, err
+		}
+		klog.Errorf("scan failed, will retry: %v", err)
+	}
+	klog.V(5).Infof("Found %d jobs in %s", len(jobs), time.Now().Sub(start))
+	return jobs, nil
 }
 
 const (

@@ -21,8 +21,11 @@ import (
 	gcpoption "google.golang.org/api/option"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
@@ -102,8 +105,8 @@ type options struct {
 
 	generator CommandGenerator
 
-	jobs         *pathIndex
-	jobAccessor  prow.JobAccessors
+	jobsIndex    *pathIndex
+	jobAccessor  prow.JobAccessor
 	jobsPath     string
 	jobURIPrefix *url.URL
 
@@ -113,23 +116,37 @@ type options struct {
 }
 
 type IndexStats struct {
+	Size    int64
 	Bugs    int
 	Entries int
-	Size    int64
+
+	Jobs       int
+	FailedJobs int
 }
 
 // Stats returns aggregate statistics for the indexed paths.
 func (o *options) Stats() IndexStats {
-	j := o.jobs.Stats()
+	j := o.jobsIndex.Stats()
 	b := o.bugs.Stats()
+
+	jobs, _ := o.jobAccessor.List(labels.Everything())
+	var totalJobs, failedJobs int
+	for _, job := range jobs {
+		totalJobs++
+		if job.Status.State != "success" {
+			failedJobs++
+		}
+	}
 	return IndexStats{
-		Entries: j.Entries,
-		Size:    j.Size,
-		Bugs:    b.Bugs,
+		Entries:    j.Entries,
+		Size:       j.Size,
+		Bugs:       b.Bugs,
+		Jobs:       totalJobs,
+		FailedJobs: failedJobs,
 	}
 }
 
-func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, error) {
+func (o *options) RipgrepSourceArguments(index *Index, jobNames sets.String) ([]string, []string, error) {
 	var args []string
 	var additionalPaths []string
 	switch index.SearchType {
@@ -148,12 +165,12 @@ func (o *options) RipgrepSourceArguments(index *Index) ([]string, []string, erro
 		if o.jobURIPrefix == nil {
 			return nil, nil, fmt.Errorf("searching on jobs is not enabled")
 		}
-		paths, err := o.jobs.SearchPaths(index)
+		paths, err := o.jobsIndex.SearchPaths(index, jobNames)
 		if err != nil {
 			return nil, nil, err
 		}
 		if paths == nil {
-			if names := o.jobs.FilenamesForSearchType(index.SearchType); len(names) > 0 {
+			if names := o.jobsIndex.FilenamesForSearchType(index.SearchType); len(names) > 0 {
 				for _, name := range names {
 					args = append(args, "--glob", name+"*")
 				}
@@ -252,7 +269,7 @@ func (o *options) MetadataFor(path string) (Result, error) {
 		}
 		result.Name = parts[last-2]
 
-		result.LastModified = o.jobs.LastModified(path)
+		result.LastModified = o.jobsIndex.LastModified(path)
 
 		return result, nil
 	default:
@@ -275,7 +292,7 @@ func (o *options) Run() error {
 		maxAge:  o.MaxAge,
 	}
 
-	o.jobs = indexedPaths
+	o.jobsIndex = indexedPaths
 
 	if len(o.BugzillaURL) > 0 {
 		url, err := url.Parse(o.BugzillaURL)
@@ -363,24 +380,34 @@ func (o *options) Run() error {
 		deckURI := u
 		deckURI.Path = "/prowjobs.js"
 
-		c := prow.NewClient(*deckURI)
 		rt, err := rest.TransportFor(&rest.Config{})
 		if err != nil {
 			klog.Exitf("Unable to build prow client: %v", err)
 		}
+		c := prow.NewClient(*deckURI)
+		c.Client = &http.Client{Transport: rt}
+
 		gcsClient, err := storage.NewClient(context.Background(), gcpoption.WithoutAuthentication())
 		if err != nil {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
 
-		c.Client = &http.Client{Transport: rt}
-		informer := prow.NewInformer(
-			c,
-			2*time.Minute,
-			30*time.Minute,
-		)
+		jobListers := []prow.JobLister{c}
+		if len(o.IndexBucket) > 0 {
+			jobListers = append(
+				jobListers,
+				// add the index lister after the client so that we get full job objects from deck, then
+				// underwrite our index objects
+				&prow.CachingLister{
+					Lister: prow.ListerFunc(func(ctx context.Context) ([]*prow.Job, error) {
+						return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
+					}),
+				},
+			)
+		}
+		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, jobListers...)
 		lister := prow.NewLister(informer.GetIndexer())
-		o.jobAccessor = prow.JobAccessors{lister}
+		o.jobAccessor = lister
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
 		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
@@ -391,13 +418,11 @@ func (o *options) Run() error {
 		informer.AddEventHandler(h)
 
 		ctx := context.Background()
-		if len(o.IndexBucket) > 0 {
-			indexReader := prow.NewIndexReader(gcsClient, o.IndexBucket, "job-state", o.MaxAge*3/4, *u)
-			o.jobAccessor = append(o.jobAccessor, indexReader)
-			go indexReader.Run(ctx, h)
-		}
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, o.jobAccessor, indexedPaths, o.NoIndex, 40)
+		go func() {
+			cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
+			store.Run(ctx, lister, indexedPaths, o.NoIndex, 40)
+		}()
 
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
 	}

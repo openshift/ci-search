@@ -14,20 +14,21 @@ import (
 	"strings"
 	"syscall"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 )
 
 var ErrMaxBytes = fmt.Errorf("reached maximum search length, more results not shown")
 
 type CommandGenerator interface {
-	Command(index *Index, search string) (cmd string, args []string, paths []string, err error)
+	Command(index *Index, search string, jobNames sets.String) (cmd string, args []string, paths []string, err error)
 	PathPrefix() string
 }
 
 type RipgrepSourceArguments interface {
 	// SearchPaths searches for paths matching the index's SearchType
 	// and MaxAge, and returns them as a slice of filesystem paths.
-	RipgrepSourceArguments(*Index) (args []string, paths []string, err error)
+	RipgrepSourceArguments(*Index, sets.String) (args []string, paths []string, err error)
 }
 
 type ripgrepGenerator struct {
@@ -36,7 +37,7 @@ type ripgrepGenerator struct {
 	arguments  RipgrepSourceArguments
 }
 
-func (g ripgrepGenerator) Command(index *Index, search string) (string, []string, []string, error) {
+func (g ripgrepGenerator) Command(index *Index, search string, jobNames sets.String) (string, []string, []string, error) {
 	args := []string{g.execPath, "-u", "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
@@ -46,10 +47,14 @@ func (g ripgrepGenerator) Command(index *Index, search string) (string, []string
 	if index.MaxMatches > 0 {
 		// always capture at least one more result than requested because rg terminates
 		// its search at the last result and won't return context for that result
-		args = append(args, "--max-count", strconv.Itoa(index.MaxMatches+1))
+		if index.Context > 0 {
+			args = append(args, "--max-count", strconv.Itoa(index.MaxMatches+1))
+		} else {
+			args = append(args, "--max-count", strconv.Itoa(index.MaxMatches))
+		}
 	}
 	args = append(args, search)
-	newArgs, paths, err := g.arguments.RipgrepSourceArguments(index)
+	newArgs, paths, err := g.arguments.RipgrepSourceArguments(index, jobNames)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -79,14 +84,12 @@ type GrepFunc func(name string, search string, lines []bytes.Buffer, moreLines i
 // * lines, the match with its surrounding context.
 // * moreLines, the number of elided lines, when the match and context
 //   is truncated due to excessive length.
-func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, fn GrepFunc) error {
-	// FIXME: parallelize this
+func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, jobNames sets.String, fn GrepFunc) error {
 	for _, search := range index.Search {
-		if err := executeGrepSingle(ctx, gen, index, search, fn); err != nil {
+		if err := executeGrepSingle(ctx, gen, index, search, jobNames, fn); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -108,8 +111,8 @@ func splitStringSliceByLength(arr []string, maxLength int) ([]string, []string) 
 	return arr, nil
 }
 
-func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, fn GrepFunc) error {
-	commandPath, commandArgs, commandPaths, err := gen.Command(index, search)
+func executeGrepSingle(ctx context.Context, gen CommandGenerator, index *Index, search string, jobNames sets.String, fn GrepFunc) error {
+	commandPath, commandArgs, commandPaths, err := gen.Command(index, search, jobNames)
 	if err != nil {
 		return err
 	}
@@ -164,6 +167,9 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 	}
 
 	maxLines := index.MaxMatches
+	if index.Context > 0 {
+		maxLines *= (index.Context*2 + 1)
+	}
 
 	br := bufio.NewReaderSize(pr, 512*1024)
 	filename := bytes.NewBuffer(make([]byte, 1024))

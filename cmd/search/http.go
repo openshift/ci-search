@@ -8,13 +8,16 @@ import (
 	"html/template"
 	"io"
 	"io/ioutil"
+	"math"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	units "github.com/docker/go-units"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
 )
 
@@ -23,9 +26,10 @@ type nopFlusher struct{}
 func (_ nopFlusher) Flush() {}
 
 type Match struct {
-	FileType  string   `json:"filename"`
-	Context   []string `json:"context,omitempty"`
-	MoreLines int      `json:"moreLines,omitempty"`
+	LastModified metav1.Time `json:"lastModified"`
+	FileType     string      `json:"filename"`
+	Context      []string    `json:"context,omitempty"`
+	MoreLines    int         `json:"moreLines,omitempty"`
 }
 
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
@@ -99,6 +103,16 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		searchTypeOptions = append(searchTypeOptions, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(searchType), selected, template.HTMLEscapeString(searchType)))
 	}
 
+	var groupByOptions []string
+	for _, opt := range []string{"job", "none"} {
+		var selected string
+		switch {
+		case !index.GroupByJob && opt == "none", index.GroupByJob && opt != "none":
+			selected = "selected"
+		}
+		groupByOptions = append(groupByOptions, fmt.Sprintf(`<option value="%s" %s>%s</option>`, template.HTMLEscapeString(opt), selected, template.HTMLEscapeString(opt)))
+	}
+
 	maxAgeOptions := []string{
 		fmt.Sprintf(`<option value="%dh" %s>6h</option>`, 6, durationSelected(6*time.Hour, index.MaxAge)),
 		fmt.Sprintf(`<option value="%dh" %s>12h</option>`, 12, durationSelected(12*time.Hour, index.MaxAge)),
@@ -128,7 +142,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	var wrapValue string
 	nowrapClass := "nowrap"
 	if index.WrapLines {
-		wrapValue = "true"
+		wrapValue = "checked"
 		nowrapClass = ""
 	}
 
@@ -142,35 +156,132 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		jobRegex,
 		strconv.Itoa(index.MaxMatches),
 		strconv.FormatInt(index.MaxBytes, 10),
+		groupByOptions,
 		wrapValue,
 	)
 
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
 		stats := o.Stats()
-		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs)
+		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
 
 	// perform a search
-	flusher.Flush()
 	fmt.Fprintf(writer, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
+	flusher.Flush()
 
-	count, err := renderMatches(req.Context(), writer, index, o.generator, start, o)
-	if err != nil {
-		klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], count, err)
-		fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
-		fmt.Fprintf(writer, htmlPageEnd)
-		return
-	}
-	klog.V(2).Infof("Search %q over %q for job %s completed with %d results", index.Search[0], index.SearchType, index.Job, count)
+	switch {
+	case index.GroupByJob:
+		result, err := o.orderedSearchResults(req.Context(), index)
+		if err != nil {
+			klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], 0, err)
+			fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
+			fmt.Fprintf(writer, htmlPageEnd)
+			return
+		}
+		bw := bufio.NewWriterSize(writer, 2048)
+		var numRuns int
+		if result.Matches > 0 {
+			fmt.Fprintln(bw, `<div class="table-responsive"><table class="table table-job-compact"><tbody>`)
+			for _, bug := range result.Bugs {
+				age, _ := formatAge(bug.Matches[0].LastModified.Time, start, index.MaxAge)
+				name := bug.Name
+				if i := strings.Index(name, ": "); i != -1 {
+					name = name[i+2:]
+				}
+				fmt.Fprintf(bw, "<tr><td><a target=\"_blank\" href=\"%s\">#%d</a></td><td>%s</td><td class=\"text-nowrap\">%s</td><td class=\"col-12\">%s</td></tr>\n", template.HTMLEscapeString(bug.URI.String()), bug.Number, template.HTMLEscapeString(bug.Matches[0].FileType), template.HTMLEscapeString(age), template.HTMLEscapeString(name))
+				if index.Context >= 0 {
+					fmt.Fprintf(bw, "<tr class=\"row-match\"><td class=\"\" colspan=\"4\"><pre class=\"small\">")
+					for _, match := range bug.Matches {
+						if err := renderLinesString(bw, match.Context, match.MoreLines); err != nil {
+							bw.Flush()
+							klog.Errorf("Search %q failed with %d matches: command failed: %v", index.Search[0], numRuns, err)
+							fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
+							fmt.Fprintf(writer, htmlPageEnd)
+							return
+						}
+					}
+					fmt.Fprintln(bw, "</pre></td></tr>")
+				}
+			}
+			for _, job := range result.Jobs {
+				stats := o.jobAccessor.JobStats(job.Name, nil, start.Add(-index.MaxAge), start.Add(time.Hour))
+				var contents string
+				if stats.Count > 0 {
+					percentFail := math.Round(float64(stats.Failures) / float64(stats.Count) * 100)
+					title := fmt.Sprintf("%d runs, %d failures, %d matching runs", stats.Count, stats.Failures, len(job.Instances))
+					if stats.Failures == 0 {
+						percentMatch := math.Round(float64(len(job.Instances)) / float64(stats.Count) * 100)
+						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of runs match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
+					} else {
+						percentMatch := math.Round(float64(len(job.Instances)) / float64(stats.Failures) * 100)
+						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of failures match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
+					}
+				}
+				numRuns += len(job.Instances)
 
-	stats := o.Stats()
-	fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>Found %d results in %s (%s in %d files and %d bugs)</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, count, time.Now().Sub(start).Truncate(time.Millisecond), units.HumanSize(float64(stats.Size)), stats.Entries, stats.Bugs, template.HTMLEscapeString(req.URL.RawQuery))
-	if count == 0 {
-		fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
+				uri := *job.Instances[0].URI
+				uri.Path = strings.ReplaceAll(path.Dir(uri.Path), "view/gcs", "job-history")
+				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), contents)
+				for _, instance := range job.Instances {
+					for _, match := range instance.Matches {
+						age, _ := formatAge(match.LastModified.Time, start, index.MaxAge)
+						fmt.Fprintf(bw, "<tr class=\"row-match\"><td><a target=\"_blank\" href=\"%s\">#%d</a></td><td>%s</td><td class=\"text-nowrap\">%s</td><td class=\"col-12\"></td></tr>\n", template.HTMLEscapeString(instance.URI.String()), instance.Number, template.HTMLEscapeString(match.FileType), template.HTMLEscapeString(age))
+						if index.Context >= 0 {
+							fmt.Fprintf(bw, "<tr class=\"row-match\"><td class=\"\" colspan=\"4\"><pre class=\"small\">")
+							if err := renderLinesString(bw, match.Context, match.MoreLines); err != nil {
+								bw.Flush()
+								klog.Errorf("Search %q failed with %d matches: command failed: %v", index.Search[0], numRuns, err)
+								fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
+								fmt.Fprintf(writer, htmlPageEnd)
+								return
+							}
+							fmt.Fprintln(bw, "</pre></td></tr>")
+						}
+					}
+				}
+			}
+			fmt.Fprintln(bw, "</table></div>")
+		}
+		bw.Flush()
+
+		stats := o.jobAccessor.JobStats("", result.JobNames, start.Add(-index.MaxAge), start)
+
+		title := fmt.Sprintf("%d runs, %d failing runs, %d matched runs,%d jobs, %d matched jobs", stats.Count, stats.Failures, numRuns, stats.Jobs, len(result.Jobs))
+		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em title="%s">`, template.HTMLEscapeString(title))
+		if stats.Count > 0 {
+			percentJobs := float64(len(result.Jobs)) / float64(stats.Jobs) * 100
+			percentRuns := float64(numRuns) / float64(stats.Failures) * 100
+			percentFailures := float64(stats.Failures) / float64(stats.Count) * 100
+			fmt.Fprintf(writer, `Across %d runs and %d jobs (%.2f%% failed), matched %.2f%% of failing runs and %.2f%% of jobs in %s`, stats.Count, stats.Jobs, percentFailures, percentRuns, percentJobs, time.Now().Sub(start).Truncate(time.Millisecond))
+		} else {
+			fmt.Fprintf(writer, `%d runs matched in %s`, numRuns, time.Now().Sub(start).Truncate(time.Millisecond))
+		}
+		fmt.Fprintf(writer, `</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, template.HTMLEscapeString(req.URL.RawQuery))
+
+		if numRuns == 0 && len(result.Bugs) == 0 {
+			fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
+		}
+
+	default:
+		count, err := renderMatches(req.Context(), writer, index, o.generator, start, o)
+		if err != nil {
+			klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], count, err)
+			fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
+			fmt.Fprintf(writer, htmlPageEnd)
+			return
+		}
+		klog.V(2).Infof("Search %q over %q for job %s completed with %d results", index.Search[0], index.SearchType, index.Job, count)
+		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>`)
+		fmt.Fprintf(writer, `Found %d results in %s`, count, time.Now().Sub(start).Truncate(time.Millisecond))
+		fmt.Fprintf(writer, `</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, template.HTMLEscapeString(req.URL.RawQuery))
+		if count == 0 {
+			fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
+		}
 	}
+
 	fmt.Fprintf(writer, "</div>")
 
 	fmt.Fprintf(writer, htmlPageEnd)
@@ -272,7 +383,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	bw := &sortableWriter{sizeLimit: 2 * 1024 * 1024, bw: bufio.NewWriterSize(w, 256*1024)}
 	var lastName string
 	drop := true
-	err := executeGrep(ctx, generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
+	err := executeGrep(ctx, generator, index, nil, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		if lastName == name {
 			// continue accumulating matches
 			if drop {
@@ -312,15 +423,11 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				return nil
 			}
 
-			var age string
-			if !metadata.LastModified.IsZero() {
-				duration := start.Sub(metadata.LastModified)
-				if !metadata.IgnoreAge && duration > index.MaxAge {
-					klog.V(7).Infof("Filtered %s, older than query limit", name)
-					drop = true
-					return nil
-				}
-				age = units.HumanDuration(duration) + " ago"
+			age, recent := formatAge(metadata.LastModified, start, index.MaxAge)
+			if !metadata.IgnoreAge && !recent {
+				klog.V(7).Infof("Filtered %s, older than query limit", name)
+				drop = true
+				return nil
 			}
 
 			count++
@@ -349,32 +456,12 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 			return nil
 		}
 
-		// remove empty leading and trailing lines
-		lines = lines[:0]
-		for _, m := range matches {
-			line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
-			if len(line) == 0 {
-				continue
-			}
-			lines = append(lines, line)
-		}
-		for i := len(lines) - 1; i >= 0; i-- {
-			if len(lines[i]) != 0 {
-				break
-			}
-			lines = lines[:i]
+		// remove empty leading and trailing lines, but preserve the line buffer to limit allocations
+		lines = trimMatches(matches, lines[:0])
+		if err := renderLines(bw, lines, moreLines); err != nil {
+			return err
 		}
 		lineCount += len(lines)
-
-		for _, line := range lines {
-			template.HTMLEscape(bw, line)
-			if _, err := fmt.Fprintln(bw); err != nil {
-				return err
-			}
-		}
-		if moreLines > 0 {
-			fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
-		}
 		return nil
 	})
 
@@ -394,6 +481,74 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 	return count, err
 }
 
+func formatAge(t time.Time, from time.Time, maxAge time.Duration) (string, bool) {
+	if t.IsZero() {
+		return "", true
+	}
+	duration := from.Sub(t)
+	return units.HumanDuration(duration) + " ago", duration <= maxAge
+}
+
+func trimMatches(matches []bytes.Buffer, lines [][]byte) [][]byte {
+	for _, m := range matches {
+		line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if len(lines[i]) != 0 {
+			break
+		}
+		lines = lines[:i]
+	}
+	return lines
+}
+
+func trimMatchStrings(matches []bytes.Buffer, lines []string) []string {
+	for _, m := range matches {
+		line := bytes.TrimRightFunc(m.Bytes(), func(r rune) bool { return r == ' ' })
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, string(line))
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if len(lines[i]) != 0 {
+			break
+		}
+		lines = lines[:i]
+	}
+	return lines
+}
+
+func renderLines(bw io.Writer, lines [][]byte, moreLines int) error {
+	for _, line := range lines {
+		template.HTMLEscape(bw, line)
+		if _, err := fmt.Fprintln(bw); err != nil {
+			return err
+		}
+	}
+	if moreLines > 0 {
+		fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
+	}
+	return nil
+}
+
+func renderLinesString(bw io.Writer, lines []string, moreLines int) error {
+	for _, line := range lines {
+		template.HTMLEscape(bw, []byte(line))
+		if _, err := fmt.Fprintln(bw); err != nil {
+			return err
+		}
+	}
+	if moreLines > 0 {
+		fmt.Fprintf(bw, "\n... %d lines not shown\n\n", moreLines)
+	}
+	return nil
+}
+
 const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
@@ -405,6 +560,7 @@ const htmlPageStart = `<!DOCTYPE html>
 #results PRE { width: calc(95vw - 2.5em); white-space: pre-wrap; padding-bottom: 1em; }
 .row-match TD { border-top: 0; }
 .table TD { padding-bottom: 0.25rem; }
+#results .table-job-compact TD > PRE { margin-bottom: 0; padding-bottom: 0.25rem; }
 </style>
 </head>
 <body>
@@ -420,19 +576,20 @@ const htmlPageEnd = `
 const htmlIndexForm = `
 <form class="form mt-4 mb-4" method="GET">
 	<div class="input-group input-group-lg mb-2">
-		<input autocomplete="off" autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
-		<select name="maxAge" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
-		<select name="context" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
-		<select name="type" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<input title="A regular expression over the contents of test logs and junit output - uses ripgrep regular expressions" autocomplete="off" autofocus name="search" class="form-control col-auto" value="%s" placeholder="Search OpenShift CI failures by entering a regex search ...">
+		<select title="How far back to search for jobs" name="maxAge" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<select title="Number of lines before and after the match to show" name="context" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
+		<select title="Type of results to return" name="type" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
 		<div class="input-group-append"><input class="btn btn-outline-primary" type="submit" value="Search"></div>
 	</div>
 	<div class="input-group input-group-sm mb-3">
 		<div class="input-group-prepend"><span class="input-group-text" for="name">Job:</span></div>
-		<input class="form-control col-auto" name="name" value="%s" placeholder="Filter job or bug names by regex ...">
-		<input autocomplete="off" class="form-control col-1" name="maxMatches" value="%s" placeholder="Max matches per job or bug">
-		<input autocomplete="off" class="form-control col-1" name="maxBytes" value="%s" placeholder="Max bytes to return">
+		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="name" value="%s" placeholder="Filter job or bug names by regex ...">
+		<input title="The number of matches per job / file to show" autocomplete="off" class="form-control col-1" name="maxMatches" value="%s" placeholder="Max matches per job or bug">
+		<input title="The maximum number of bytes for the response" autocomplete="off" class="form-control col-1" name="maxBytes" value="%s" placeholder="Max bytes to return">
+		<select title="Group results by job (with stats) or no grouping" name="groupBy" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
 		<div class="input-group-append"><span class="input-group-text">
-			<input id="wrap" type="checkbox" name="wrap" value="%s" onchange="document.getElementById('results').classList.toggle('nowrap')">
+			<input id="wrap" type="checkbox" name="wrap" %s onchange="document.getElementById('results').classList.toggle('nowrap')">
 			<label for="wrap" style="margin-bottom: 0; margin-left: 0.4em;">Wrap lines</label>
 		</span></div>
 	</div>
@@ -457,6 +614,6 @@ const htmlEmptyPage = `
 <li><code>^release-</code> - all jobs that start with 'release-'</li>
 <li><code>UpgradeBlocker</code> - bugs that have 'UpgradeBlocker' in their title</li>
 </ul>
-<p>Currently indexing %s across %d results and %d bugs</p>
+<p>Currently indexing %s across %d results, %d failed jobs of %d, and %d bugs</p>
 </div>
 `

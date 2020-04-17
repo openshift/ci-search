@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -42,53 +41,13 @@ func NewDiskStore(client *storage.Client, path string, maxAge time.Duration) *Di
 type JobAccessor interface {
 	Get(name string) (*Job, error)
 	List(labels.Selector) ([]*Job, error)
+	JobStats(name string, names sets.String, from, to time.Time) JobStats
 }
 
-type JobAccessors []JobAccessor
-
-func (a JobAccessors) Get(name string) (*Job, error) {
-	var lastErr error
-	for _, accessor := range a {
-		job, err := accessor.Get(name)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return job, nil
-	}
-	if lastErr == nil {
-		return nil, errors.NewNotFound(prowGR, name)
-	}
-	return nil, lastErr
-}
-
-func (a JobAccessors) List(s labels.Selector) ([]*Job, error) {
-	var lastErr error
-	var allJobs []*Job
-	found := sets.NewString()
-	for _, accessor := range a {
-		jobs, err := accessor.List(s)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if allJobs == nil {
-			allJobs = jobs
-			for _, job := range jobs {
-				found.Insert(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
-			}
-			continue
-		}
-		for _, job := range jobs {
-			key := fmt.Sprintf("%s/%s", job.Namespace, job.Name)
-			if found.Has(key) {
-				continue
-			}
-			found.Insert(key)
-			allJobs = append(allJobs, job)
-		}
-	}
-	return allJobs, lastErr
+type JobStats struct {
+	Jobs     int
+	Count    int
+	Failures int
 }
 
 type PathNotifier interface {
@@ -121,14 +80,16 @@ func (s *DiskStore) Handler() cache.ResourceEventHandler {
 				if !ok {
 					return
 				}
-				s.notifyChanged(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
+				key, _ := cache.MetaNamespaceKeyFunc(job)
+				s.notifyChanged(key)
 			},
 			UpdateFunc: func(_, obj interface{}) {
 				job, ok := obj.(*Job)
 				if !ok {
 					return
 				}
-				s.notifyChanged(fmt.Sprintf("%s/%s", job.Namespace, job.Name))
+				key, _ := cache.MetaNamespaceKeyFunc(job)
+				s.notifyChanged(key)
 			},
 		},
 	}
@@ -189,8 +150,6 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	if job.Status.State == "error" && job.Status.URL == "https://github.com/kubernetes/test-infra/issues" {
 		return nil, nil
 	}
-	// path := s.pathForJob(job)
-	// klog.Infof("Should create directory %s", path)
 	u, err := url.Parse(job.Status.URL)
 	if err != nil {
 		return nil, fmt.Errorf("job %s has no valid status URL: %v", job.Name, err)

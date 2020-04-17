@@ -55,7 +55,7 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 
 	counts := make(map[string]int, len(index.Search))
 	var lastJob string
-	err = executeGrep(req.Context(), o.generator, index, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
+	err = executeGrep(req.Context(), o.generator, index, nil, func(name string, search string, matches []bytes.Buffer, moreLines int) error {
 		metadata, err := o.MetadataFor(name)
 		if err != nil {
 			klog.Errorf("unable to resolve metadata for: %s: %v", name, err)
