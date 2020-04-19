@@ -223,7 +223,11 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 				numRuns += len(job.Instances)
 
 				uri := *job.Instances[0].URI
-				uri.Path = strings.ReplaceAll(path.Dir(uri.Path), "view/gcs", "job-history")
+				if job.Trigger == "pull" {
+					uri.Path = path.Join("job-history", o.IndexBucket, "pr-logs", "directory", job.Name)
+				} else {
+					uri.Path = path.Join("job-history", o.IndexBucket, "logs", job.Name)
+				}
 				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), contents)
 				for _, instance := range job.Instances {
 					for _, match := range instance.Matches {

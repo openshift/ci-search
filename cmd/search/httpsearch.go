@@ -105,6 +105,7 @@ type SearchJobInstanceResult struct {
 
 type SearchJobsResult struct {
 	Name      string
+	Trigger   string
 	Instances []SearchJobInstanceResult
 }
 
@@ -193,6 +194,9 @@ func (o *options) orderedSearchResults(ctx context.Context, index *Index) (*Sear
 			return nil
 		default:
 			job := result.JobByName(metadata.Name)
+			if len(job.Trigger) == 0 {
+				job.Trigger = metadata.Trigger
+			}
 			if len(job.Instances) == 0 || job.Instances[len(job.Instances)-1].Number != metadata.Number {
 				job.Instances = append(job.Instances, SearchJobInstanceResult{
 					Number: metadata.Number,
