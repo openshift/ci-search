@@ -206,7 +206,8 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 	}
 
 	for _, comment := range comments.Comments {
-		escapedText := strings.Replace(comment.Text, "---", "\x00\x00\x00", -1)
+		escapedText := strings.ReplaceAll(comment.Text, "\x00", "\x1B")
+		escapedText = strings.ReplaceAll(escapedText, "\n---\n", "\n\x00\x00\x00\n")
 		if _, err := fmt.Fprintf(
 			w,
 			"\n---\nComment %d by %s at %s\n%s",
@@ -387,7 +388,7 @@ ScanHeader:
 
 		case 2:
 			// We got a full comment chunk. Unescape the special sequence '\n---\n' if it was in the text.
-			comment.Text = strings.Replace(sr.Text(), "\x00\x00\x00", "---", -1)
+			comment.Text = strings.ReplaceAll(sr.Text(), "\n\x00\x00\x00\n", "\n---\n")
 
 			comments = append(comments, comment)
 			comment = BugComment{}
