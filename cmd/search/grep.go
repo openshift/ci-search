@@ -207,7 +207,7 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 		if n > 0 || (err != nil && err != io.EOF) {
 			klog.Errorf("Unread input %d: %v", n, err)
 		}
-		klog.V(2).Infof("Waiting for command to finish after reading %d lines and %d bytes", linesRead, bytesRead)
+		klog.V(6).Infof("Waiting for command to finish after reading %d lines and %d bytes", linesRead, bytesRead)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && matches == 0 {
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {

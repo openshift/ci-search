@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,8 @@ type Result struct {
 }
 
 type Index struct {
+	Mode string
+
 	// One or more search strings. Some pages support only a single search
 	Search []string
 
@@ -64,12 +67,32 @@ type Index struct {
 	GroupByJob bool
 }
 
+func (i *Index) String() string {
+	if i == nil {
+		return "nil"
+	}
+	sb := &strings.Builder{}
+	sb.WriteRune('{')
+	fmt.Fprintf(sb, "Mode=%s", i.Mode)
+	fmt.Fprintf(sb, " Search=%v", i.Search)
+	fmt.Fprintf(sb, " SearchType=%s", i.SearchType)
+	if i.Job != nil {
+		fmt.Fprintf(sb, " Job=%s", i.Job.String())
+	} else {
+		sb.WriteString(" Job=nil")
+	}
+	sb.WriteRune('}')
+	return sb.String()
+}
+
 func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index, error) {
 	if err := req.ParseForm(); err != nil {
 		return nil, err
 	}
 
-	index := &Index{}
+	index := &Index{
+		Mode: mode,
+	}
 
 	index.Search, _ = req.Form["search"]
 	if len(index.Search) == 0 && mode == "chart" {

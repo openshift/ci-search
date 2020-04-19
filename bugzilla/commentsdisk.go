@@ -188,7 +188,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 
 	if _, err := fmt.Fprintf(
 		w,
-		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s",
+		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\n---\n",
 		bug.Info.ID,
 		lineSafe(bug.Info.Summary),
 		lineSafe(bug.Info.Status),
@@ -206,11 +206,10 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 	}
 
 	for _, comment := range comments.Comments {
-		escapedText := strings.ReplaceAll(comment.Text, "\x00", "\x1B")
-		escapedText = strings.ReplaceAll(escapedText, "\n---\n", "\n\x00\x00\x00\n")
+		escapedText := strings.ReplaceAll(strings.ReplaceAll(comment.Text, "\x00", " "), "\x1e", " ")
 		if _, err := fmt.Fprintf(
 			w,
-			"\n---\nComment %d by %s at %s\n%s",
+			"Comment %d by %s at %s\n%s\n\x1e",
 			comment.ID,
 			strings.TrimSpace(comment.Creator),
 			timeToRV(comment.CreationTime),
@@ -244,7 +243,7 @@ var (
 )
 
 const (
-	bugCommentDelimiter = "\n---\n"
+	bugCommentDelimiter = "\x1e"
 )
 
 func readBugComments(path string, estimatedSize int64) (*BugComments, error) {
@@ -345,11 +344,11 @@ ScanHeader:
 			}
 			bug.Info.Whiteboard = parts[1]
 		case strings.HasPrefix(text, "Internal Whiteboard: "):
-			parts := strings.SplitN(text, " ", 2)
+			parts := strings.SplitN(text, " ", 3)
 			if len(parts) < 1 || len(parts[1]) == 0 {
 				continue
 			}
-			bug.Info.InternalWhiteboard = parts[1]
+			bug.Info.InternalWhiteboard = parts[2]
 		case text == "---":
 			foundSeparator = true
 			break ScanHeader
@@ -369,7 +368,7 @@ ScanHeader:
 		case 1:
 			m := reDiskCommentsLineCommentHeader.FindStringSubmatch(sr.Text())
 			if m == nil {
-				return nil, fmt.Errorf("%s: comment header line must be of the form 'Comment ID by AUTHOR at DATE'", path)
+				return nil, fmt.Errorf("%s: comment header line %d must be of the form 'Comment ID by AUTHOR at DATE': %q", path, len(comments)+1, sr.Text())
 			}
 
 			comment.ID, err = strconv.Atoi(m[1])
@@ -387,9 +386,7 @@ ScanHeader:
 			phase = 2
 
 		case 2:
-			// We got a full comment chunk. Unescape the special sequence '\n---\n' if it was in the text.
-			comment.Text = strings.ReplaceAll(sr.Text(), "\n\x00\x00\x00\n", "\n---\n")
-
+			comment.Text = strings.TrimSuffix(sr.Text(), "\n")
 			comments = append(comments, comment)
 			comment = BugComment{}
 

@@ -33,12 +33,11 @@ func NewLister(indexer cache.Indexer) *Lister {
 	}); err != nil {
 		panic(err)
 	}
-	return &Lister{indexer: indexer, resource: prowGR}
+	return &Lister{indexer: indexer}
 }
 
 type Lister struct {
-	indexer  cache.Indexer
-	resource schema.GroupResource
+	indexer cache.Indexer
 }
 
 func (s *Lister) List(selector labels.Selector) (ret []*Job, err error) {
@@ -54,7 +53,7 @@ func (s *Lister) Get(name string) (*Job, error) {
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.NewNotFound(s.resource, name)
+		return nil, errors.NewNotFound(prowGR, name)
 	}
 	return obj.(*Job), nil
 }
@@ -167,7 +166,6 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 		lists = append(lists, list)
 	}
 	merged := mergeJobs(lists)
-	klog.V(4).Infof("Merged into %d results", len(merged.Items))
 	return merged, nil
 }
 

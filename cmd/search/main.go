@@ -425,6 +425,8 @@ func (o *options) Run() error {
 		}()
 
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
+	} else {
+		o.jobAccessor = prow.Empty
 	}
 
 	go wait.Forever(func() {

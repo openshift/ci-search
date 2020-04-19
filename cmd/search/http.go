@@ -52,15 +52,20 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 }
 
 func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
+	var index *Index
+	var success bool
 	start := time.Now()
-	defer func() { klog.Infof("Render index in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+	defer func() {
+		klog.Infof("Render index %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		flusher = nopFlusher{}
 	}
 
-	index, err := parseRequest(req, "text", o.MaxAge)
+	var err error
+	index, err = parseRequest(req, "text", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -289,6 +294,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(writer, "</div>")
 
 	fmt.Fprintf(writer, htmlPageEnd)
+
+	success = true
 }
 
 func intSelected(current, expected int) string {
@@ -350,7 +357,6 @@ func (w *sortableWriter) SetIndex(index int64) {
 	w.index = index
 
 	if w.sizeLimit <= 0 {
-		klog.Infof("DEBUG: results larger than window, flushing from now on")
 		w.buf = nil
 		w.Flush()
 	}

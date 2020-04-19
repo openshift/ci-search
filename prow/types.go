@@ -1,9 +1,34 @@
 package prow
 
 import (
+	"time"
+
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
+
+type JobAccessor interface {
+	Get(name string) (*Job, error)
+	List(labels.Selector) ([]*Job, error)
+	JobStats(name string, names sets.String, from, to time.Time) JobStats
+}
+
+var Empty JobAccessor = emptyJobAccessor{}
+
+type emptyJobAccessor struct{}
+
+func (emptyJobAccessor) Get(name string) (*Job, error) {
+	return nil, errors.NewNotFound(prowGR, name)
+}
+func (emptyJobAccessor) List(_ labels.Selector) ([]*Job, error) {
+	return nil, nil
+}
+func (emptyJobAccessor) JobStats(name string, names sets.String, from, to time.Time) JobStats {
+	return JobStats{}
+}
 
 type JobList struct {
 	metav1.TypeMeta
