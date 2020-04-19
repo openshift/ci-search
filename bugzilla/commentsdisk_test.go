@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 				CreationTime: metav1.Time{Time: time.Unix(225, 0)},
 				Time:         metav1.Time{Time: time.Unix(225, 0)},
 				Creator:      "David Doublecomment",
-				Text:         "Fake comment\n---",
+				Text:         "Fake\x1e comment\n---",
 			},
 			{
 				ID:           4,
@@ -105,6 +106,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 
 	// expect the time to be lost (creation time only is sent)
 	comments.Comments[1].Time = comments.Comments[1].CreationTime
+	actualComments.Comments[3].Text = strings.Replace(actualComments.Comments[3].Text, "Fake  ", "Fake\x1e ", 1)
 
 	if !reflect.DeepEqual(comments, actualComments) {
 		t.Fatalf("\n%s", diff.ObjectReflectDiff(comments, actualComments))
