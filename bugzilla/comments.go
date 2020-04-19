@@ -169,7 +169,7 @@ func (s *CommentStore) run(ctx context.Context, persisted PersistentCommentStore
 		}
 
 		now := time.Now()
-		klog.V(5).Infof("Fetching %d comments", len(bugIDs))
+		klog.V(7).Infof("Fetching %d comments", len(bugIDs))
 		bugComments, err := s.client.BugCommentsByID(ctx, bugIDs...)
 		if err != nil {
 			klog.Warningf("comment store failed to retrieve comments: %v", err)
@@ -213,7 +213,7 @@ func (s *CommentStore) filterComments(bugComments *BugCommentsList) {
 
 func (s *CommentStore) mergeBugs(bugComments *BugCommentsList, now time.Time, persisted PersistentCommentStore) {
 	var total int
-	defer func() { klog.V(5).Infof("Updated %d comment records", total) }()
+	defer func() { klog.V(7).Infof("Updated %d comment records", total) }()
 	s.lock.Lock()
 	defer s.lock.Unlock()
 

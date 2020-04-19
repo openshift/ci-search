@@ -182,7 +182,7 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	if err := accumulator.MarkCompleted(job.Status.CompletionTime.Time); err != nil {
 		klog.Errorf("Unable to mark job as completed: %v", err)
 	}
-	klog.Infof("Download %s succeeded in %s (%s)", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond), job.Status.CompletionTime)
+	klog.V(2).Infof("Download %s succeeded in %s", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond))
 	return nil, nil
 }
 

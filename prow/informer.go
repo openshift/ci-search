@@ -167,7 +167,6 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 		lists = append(lists, list)
 	}
 	merged := mergeJobs(lists)
-	klog.V(4).Infof("Merged into %d results", len(merged.Items))
 	return merged, nil
 }
 

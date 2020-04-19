@@ -92,9 +92,9 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 			}
 			list.Continue = strconv.Itoa(args.Offset + int(options.Limit))
 		}
-		klog.V(2).Infof("Listed bugs offset=%d limit=%d total=%d items=%d hasMore=%t nextOffset=%s", args.Offset, options.Limit, returned, len(list.Items), hasMore, list.Continue)
+		klog.V(6).Infof("Listed bugs offset=%d limit=%d total=%d items=%d hasMore=%t nextOffset=%s", args.Offset, options.Limit, returned, len(list.Items), hasMore, list.Continue)
 	} else {
-		klog.V(2).Infof("Listed bugs offset=%d limit=%d total=%d items=%d", args.Offset, options.Limit, len(bugs.Bugs), len(list.Items))
+		klog.V(6).Infof("Listed bugs offset=%d limit=%d total=%d items=%d", args.Offset, options.Limit, len(bugs.Bugs), len(list.Items))
 	}
 	return list, nil
 }
@@ -163,7 +163,7 @@ func (w *periodicWatcher) run() {
 	} else {
 		delay = w.interval
 	}
-	klog.V(5).Infof("Waiting for minimum interval %s", delay)
+	klog.V(6).Infof("Waiting for minimum interval %s", delay)
 	select {
 	case <-time.After(delay):
 	case <-w.done:

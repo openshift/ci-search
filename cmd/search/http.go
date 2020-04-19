@@ -350,7 +350,6 @@ func (w *sortableWriter) SetIndex(index int64) {
 	w.index = index
 
 	if w.sizeLimit <= 0 {
-		klog.Infof("DEBUG: results larger than window, flushing from now on")
 		w.buf = nil
 		w.Flush()
 	}

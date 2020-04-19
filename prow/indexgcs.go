@@ -159,20 +159,20 @@ func readJobRange(ctx context.Context, bucket *storage.BucketHandle, index strin
 			return err
 		}
 		if stop {
-			klog.Infof("stop: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
+			klog.V(6).Infof("stop: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
 			break
 		}
 		if done {
-			klog.Infof("done: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
+			klog.V(6).Infof("done: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
 			break
 		}
-		klog.Infof("read: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
+		klog.V(6).Infof("read: match=%d skip=%d prefix=%s (%s,%s]", match, skip, searchPrefix, fromTimestamp, nextTimestamp)
 
 		from = nextFrom
 		fromTimestamp = nextTimestamp
 	}
 
-	klog.Infof("completed in %s with %d scans", time.Now().Sub(start), scans)
+	klog.V(4).Infof("Index completed in %s with %d scans", time.Now().Sub(start), scans)
 	return nil
 }
 
