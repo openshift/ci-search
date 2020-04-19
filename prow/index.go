@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -36,12 +34,6 @@ func NewDiskStore(client *storage.Client, path string, maxAge time.Duration) *Di
 		queue:  queue,
 		client: client,
 	}
-}
-
-type JobAccessor interface {
-	Get(name string) (*Job, error)
-	List(labels.Selector) ([]*Job, error)
-	JobStats(name string, names sets.String, from, to time.Time) JobStats
 }
 
 type JobStats struct {
