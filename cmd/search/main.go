@@ -29,6 +29,7 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/pkg/proc"
 	"github.com/openshift/ci-search/prow"
 )
 
@@ -39,7 +40,7 @@ func main() {
 	original.Set("v", "2")
 
 	// the reaper handles duties running as PID 1 when in a contanier
-	// go proc.StartReaper()
+	go proc.StartPeriodicReaper(10)
 
 	opt := &options{
 		ListenAddr:        ":8080",
