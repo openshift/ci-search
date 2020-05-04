@@ -39,15 +39,20 @@ func (s *scatter) At(x, y int) color.Color {
 }
 
 func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
-	start := time.Now()
-	defer func() { klog.Infof("Render chart PNG in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
-
 	if req.Header.Get("Accept") == "text/html" {
 		o.handleChart(w, req)
 		return
 	}
 
-	index, err := parseRequest(req, "chart", o.MaxAge)
+	start := time.Now()
+	var index *Index
+	var success bool
+	defer func() {
+		klog.Infof("Render chart PNG %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
+
+	var err error
+	index, err = parseRequest(req, "chart", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -73,6 +78,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	result, err := o.searchResult(req.Context(), index)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	maxDuration := 0
@@ -178,5 +184,8 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	if err = png.Encode(w, img); err != nil {
 		klog.Errorf("Failed to write response: %v", err)
+		return
 	}
+
+	success = true
 }

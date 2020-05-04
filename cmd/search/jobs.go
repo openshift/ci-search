@@ -14,7 +14,10 @@ import (
 
 func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	defer func() { klog.Infof("Render job results in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+	var success bool
+	defer func() {
+		klog.Infof("Render jobs duration=%s success=%t", time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
 
 	if o.jobAccessor == nil {
 		http.Error(w, "Unable to serve jobs data because no prow data source was configured.", http.StatusInternalServerError)
@@ -52,5 +55,8 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	defer writer.Close()
 	if _, err := writer.Write(data); err != nil {
 		klog.Errorf("Failed to write response: %v", err)
+		return
 	}
+
+	success = true
 }

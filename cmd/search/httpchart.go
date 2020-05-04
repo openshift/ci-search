@@ -37,15 +37,20 @@ var specialColors = map[string]color.Color{
 }
 
 func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
-	start := time.Now()
-	defer func() { klog.Infof("Render chart in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
-
 	if req.Header.Get("Accept") == "text/png" {
 		o.handleChartPNG(w, req)
 		return
 	}
 
-	index, err := parseRequest(req, "chart", o.MaxAge)
+	start := time.Now()
+	var index *Index
+	var success bool
+	defer func() {
+		klog.Infof("Render chart %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
+
+	var err error
+	index, err = parseRequest(req, "chart", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -98,7 +103,10 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 	})
 	if err != nil {
 		klog.Errorf("Failed to execute chart template: %v", err)
+		return
 	}
+
+	success = true
 }
 
 func hexColor(color color.Color) string {
