@@ -62,20 +62,16 @@ func StartPeriodicReaper(period int64) {
 			var err error
 			for {
 				for _, z := range zs {
-					klog.V(4).Infof("Found a zombie: %d", z)
-					cpid, err := syscall.Wait4(z, nil, syscall.WNOHANG, nil)
-					if err != nil {
+					if _, err := syscall.Wait4(z, nil, syscall.WNOHANG, nil); err != nil {
 						klog.V(4).Infof("Zombie reap error: %v", err)
-					} else {
-						klog.V(4).Infof("Zombie reaped: %d", cpid)
 					}
 				}
+				klog.V(4).Infof("Reaped: %v", zs)
 				zs, err = parseProcForZombies()
 				if err != nil {
 					klog.V(4).Infof(err.Error())
 					continue
 				}
-				klog.V(4).Infof("Sleeping for %v seconds", period)
 				time.Sleep(time.Duration(period) * time.Second)
 			}
 		}()

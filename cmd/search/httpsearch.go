@@ -16,9 +16,14 @@ import (
 
 func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	defer func() { klog.Infof("Render search result in %s", time.Now().Sub(start).Truncate(time.Millisecond)) }()
+	var index *Index
+	var success bool
+	defer func() {
+		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
 
-	index, err := parseRequest(req, "text", o.MaxAge)
+	var err error
+	index, err = parseRequest(req, "text", o.MaxAge)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
 		return
@@ -32,6 +37,7 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	result, err := o.searchResult(req.Context(), index)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	data, err := json.Marshal(result)
@@ -46,7 +52,10 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 
 	if _, err = writer.Write(data); err != nil {
 		klog.Errorf("Failed to write response: %v", err)
+		return
 	}
+
+	success = true
 }
 
 // searchResult returns a result[uri][search][]*Match.
