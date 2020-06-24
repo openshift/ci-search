@@ -93,6 +93,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 		match := &Match{
 			FileType:  metadata.FileType,
 			MoreLines: moreLines,
+			Name:      metadata.Name,
 		}
 
 		for _, m := range matches {

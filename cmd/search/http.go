@@ -26,6 +26,7 @@ type nopFlusher struct{}
 func (_ nopFlusher) Flush() {}
 
 type Match struct {
+	Name         string      `json:"name,omitempty"`
 	LastModified metav1.Time `json:"lastModified"`
 	FileType     string      `json:"filename"`
 	Context      []string    `json:"context,omitempty"`
