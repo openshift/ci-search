@@ -188,7 +188,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 
 	if _, err := fmt.Fprintf(
 		w,
-		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\n---\n",
+		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\nEnvironment:%s\n---\n",
 		bug.Info.ID,
 		lineSafe(bug.Info.Summary),
 		lineSafe(bug.Info.Status),
@@ -199,6 +199,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 		arrayLineSafe(bug.Info.Keywords, ", "),
 		lineSafe(bug.Info.Whiteboard),
 		lineSafe(bug.Info.InternalWhiteboard),
+		lineSafe(strings.ReplaceAll(bug.Info.Environment, "\x0D", "")),
 	); err != nil {
 		f.Close()
 		os.Remove(path)
@@ -349,6 +350,12 @@ ScanHeader:
 				continue
 			}
 			bug.Info.InternalWhiteboard = parts[2]
+		case strings.HasPrefix(text, "Environment: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Environment = parts[1]
 		case text == "---":
 			foundSeparator = true
 			break ScanHeader
