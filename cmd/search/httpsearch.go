@@ -58,6 +58,66 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	success = true
 }
 
+func (o *options) handleSearchV2(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	var index *Index
+	var success bool
+	defer func() {
+		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
+
+	var err error
+	index, err = parseRequest(req, "text", o.MaxAge)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad input: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if len(index.Search) == 0 {
+		http.Error(w, "The 'search' query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	internalResults, err := o.searchResult(req.Context(), index)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed search: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	result := SearchResponse{
+		Results: make(map[string]SearchResponseResult),
+	}
+	for url, searchResults := range internalResults {
+		for query, matches := range searchResults {
+			for _, match := range matches {
+				match.URL = url
+				if response, found := result.Results[query]; !found {
+					result.Results[query] = SearchResponseResult{Matches: []*Match{match}}
+				} else {
+					response.Matches = append(response.Matches, match)
+					result.Results[query] = response
+				}
+			}
+		}
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to serialize result: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	writer := encodedWriter(w, req)
+	defer writer.Close()
+
+	if _, err = writer.Write(data); err != nil {
+		klog.Errorf("Failed to write response: %v", err)
+		return
+	}
+
+	success = true
+}
+
 // searchResult returns a result[uri][search][]*Match.
 func (o *options) searchResult(ctx context.Context, index *Index) (map[string]map[string][]*Match, error) {
 	result := map[string]map[string][]*Match{}

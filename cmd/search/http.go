@@ -31,6 +31,15 @@ type Match struct {
 	FileType     string      `json:"filename"`
 	Context      []string    `json:"context,omitempty"`
 	MoreLines    int         `json:"moreLines,omitempty"`
+	URL          string      `json:"url,omitempty"`
+}
+
+type SearchResponseResult struct {
+	Matches []*Match `json:"matches,omitempty"`
+}
+type SearchResponse struct {
+	// SearchResults is a map of searchstring to search results that matched that search string
+	Results map[string]SearchResponseResult `json:"results"`
 }
 
 func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
