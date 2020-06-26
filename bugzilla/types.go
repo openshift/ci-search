@@ -99,9 +99,10 @@ type BugInfo struct {
 	AssignedTo         string      `json:"assigned_to"`
 	CreationTime       metav1.Time `json:"creation_time"`
 	LastChangeTime     metav1.Time `json:"last_change_time"`
+	Environment        string      `json:"cf_environment"`
 }
 
-var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time"}
+var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time", "cf_environment"}
 
 type SearchBugsArgs struct {
 	LastChangeTime time.Time
