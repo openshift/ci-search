@@ -455,6 +455,7 @@ func (o *options) Run() error {
 		mux.HandleFunc("/config", o.handleConfig)
 		mux.HandleFunc("/jobs", o.handleJobs)
 		mux.HandleFunc("/search", o.handleSearch)
+		mux.HandleFunc("/v2/search", o.handleSearchV2)
 		mux.HandleFunc("/", o.handleIndex)
 
 		go func() {
