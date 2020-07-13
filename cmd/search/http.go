@@ -19,6 +19,8 @@ import (
 	units "github.com/docker/go-units"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/bugzilla"
 )
 
 type nopFlusher struct{}
@@ -26,12 +28,13 @@ type nopFlusher struct{}
 func (_ nopFlusher) Flush() {}
 
 type Match struct {
-	Name         string      `json:"name,omitempty"`
-	LastModified metav1.Time `json:"lastModified"`
-	FileType     string      `json:"filename"`
-	Context      []string    `json:"context,omitempty"`
-	MoreLines    int         `json:"moreLines,omitempty"`
-	URL          string      `json:"url,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	LastModified metav1.Time       `json:"lastModified"`
+	FileType     string            `json:"filename"`
+	Context      []string          `json:"context,omitempty"`
+	MoreLines    int               `json:"moreLines,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Bug          *bugzilla.BugInfo `json:"bugInfo,omitempty"`
 }
 
 type SearchResponseResult struct {

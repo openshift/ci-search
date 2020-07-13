@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/openshift/ci-search/bugzilla"
 )
 
 type Result struct {
@@ -31,6 +33,8 @@ type Result struct {
 
 	// IgnoreAge is true if the result should be included regardless of age.
 	IgnoreAge bool
+
+	Bug *bugzilla.BugInfo
 }
 
 type Index struct {

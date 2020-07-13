@@ -154,6 +154,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			FileType:  metadata.FileType,
 			MoreLines: moreLines,
 			Name:      metadata.Name,
+			Bug:       metadata.Bug,
 		}
 
 		for _, m := range matches {
