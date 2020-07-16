@@ -223,6 +223,7 @@ func (o *options) MetadataFor(path string) (Result, error) {
 					result.Name = fmt.Sprintf("Bug %d: %s", id, comments.Info.Summary)
 				}
 			}
+			result.Bug = &comments.Info
 		}
 
 		result.IgnoreAge = true
