@@ -38,7 +38,7 @@ type ripgrepGenerator struct {
 }
 
 func (g ripgrepGenerator) Command(index *Index, search string, jobNames sets.String) (string, []string, []string, error) {
-	args := []string{g.execPath, "-z", "-u", "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
+	args := []string{g.execPath, "-a", "-z", "-u", "--color", "never", "-S", "--null", "--no-line-number", "--no-heading"}
 	if index.Context >= 0 {
 		args = append(args, "--context", strconv.Itoa(index.Context))
 	} else {
