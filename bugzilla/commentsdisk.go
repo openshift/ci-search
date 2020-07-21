@@ -188,7 +188,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 
 	if _, err := fmt.Fprintf(
 		w,
-		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\nTarget Release: %s\nEnvironment:%s\n---\n",
+		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\nTarget Release: %s\nComponent: %s\nEnvironment:%s\n---\n",
 		bug.Info.ID,
 		lineSafe(bug.Info.Summary),
 		lineSafe(bug.Info.Status),
@@ -200,6 +200,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 		lineSafe(bug.Info.Whiteboard),
 		lineSafe(bug.Info.InternalWhiteboard),
 		arrayLineSafe(bug.Info.TargetRelease, ", "),
+		arrayLineSafe(bug.Info.Component, ", "),
 		lineSafe(strings.ReplaceAll(bug.Info.Environment, "\x0D", "")),
 	); err != nil {
 		f.Close()
@@ -357,6 +358,12 @@ ScanHeader:
 				continue
 			}
 			bug.Info.TargetRelease = strings.Split(parts[2], ", ")
+		case strings.HasPrefix(text, "Component: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 1 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Component = strings.Split(parts[1], ", ")
 		case strings.HasPrefix(text, "Environment: "):
 			parts := strings.SplitN(text, " ", 2)
 			if len(parts) < 1 || len(parts[1]) == 0 {

@@ -96,6 +96,7 @@ type BugInfo struct {
 	Whiteboard         string      `json:"whiteboard"`
 	InternalWhiteboard string      `json:"cf_internal_whiteboard"`
 	Creator            string      `json:"creator"`
+	Component          []string    `json:"component"`
 	AssignedTo         string      `json:"assigned_to"`
 	CreationTime       metav1.Time `json:"creation_time"`
 	LastChangeTime     metav1.Time `json:"last_change_time"`
@@ -103,7 +104,7 @@ type BugInfo struct {
 	TargetRelease      []string    `json:"target_release"`
 }
 
-var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time", "cf_environment", "target_release"}
+var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time", "cf_environment", "target_release", "component"}
 
 type SearchBugsArgs struct {
 	LastChangeTime time.Time
