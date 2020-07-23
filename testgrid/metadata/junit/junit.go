@@ -97,6 +97,9 @@ func Parse(buf []byte) (Suites, error) {
 	var suites Suites
 	// Try to parse it as a <testsuites/> object
 	err := unmarshalXML(buf, &suites)
+	if err == io.EOF {
+		return suites, nil
+	}
 	if err != nil {
 		// Maybe it is a <testsuite/> object instead
 		suites.Suites = append([]Suite(nil), Suite{})

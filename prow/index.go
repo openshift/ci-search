@@ -12,11 +12,35 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 )
+
+var (
+	metricScrapedJobs = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "job_scraped",
+		Help: "The number of completed jobs that were downloaded.",
+	})
+	metricScrapedJobsFailed = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "job_scraped_failed",
+		Help: "The number of times a completed job failed to download.",
+	})
+	metricScrapedJobsIgnored = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "job_scraped_ignored",
+		Help: "The number of times we ignored a completed job due to unexpected data in the job.",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(
+		metricScrapedJobs,
+		metricScrapedJobsFailed,
+		metricScrapedJobsIgnored,
+	)
+}
 
 type DiskStore struct {
 	base   string
@@ -140,21 +164,25 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 
 func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) ([]string, error) {
 	if job.Status.State == "error" && job.Status.URL == "https://github.com/kubernetes/test-infra/issues" {
+		metricScrapedJobsIgnored.Add(1)
 		return nil, nil
 	}
 	u, err := url.Parse(job.Status.URL)
 	if err != nil {
+		metricScrapedJobsFailed.Add(1)
 		return nil, fmt.Errorf("job %s has no valid status URL: %v", job.Name, err)
 	}
 
 	bucket, _, _, _, parts, err := jobPathToAttributes(u.Path, job.Status.URL)
 	if err != nil {
+		metricScrapedJobsFailed.Add(1)
 		return nil, err
 	}
 	if len(bucket) == 0 {
 		// This typically indicates that Prow changed in an unexpected way, perhaps by altering the
 		// URL it reports to jobs.
 		klog.Infof("Job URL cannot be indexed, does not match expected structure: %s", job.Status.URL)
+		metricScrapedJobsIgnored.Add(1)
 		return nil, nil
 	}
 
@@ -172,12 +200,15 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	}
 	if err := ReadBuild(build, accumulator); err != nil {
 		klog.Infof("Download %s failed in %s: %v", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond), err)
+		metricScrapedJobsFailed.Add(1)
 		return nil, err
 	}
 	if err := accumulator.MarkCompleted(job.Status.CompletionTime.Time); err != nil {
 		klog.Errorf("Unable to mark job as completed: %v", err)
+		metricScrapedJobsFailed.Add(1)
 	}
 	klog.V(2).Infof("Download %s succeeded in %s", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond))
+	metricScrapedJobs.Add(1)
 	return nil, nil
 }
 
