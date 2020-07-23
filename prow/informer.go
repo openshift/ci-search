@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -113,25 +114,49 @@ type JobLister interface {
 	ListJobs(ctx context.Context) ([]*Job, error)
 }
 
-func NewInformer(interval, resyncInterval time.Duration, listers ...JobLister) cache.SharedIndexInformer {
+var metricJobSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "informer_list_jobs",
+	Help: "Prints the current number of jobs known to a jobs informer.",
+}, []string{"name"})
+
+func init() {
+	prometheus.MustRegister(metricJobSize)
+}
+
+func NewInformer(interval, resyncInterval, maxAge time.Duration, initialLister JobLister, listers ...JobLister) cache.SharedIndexInformer {
 	lw := &ListWatcher{
-		interval: interval,
-		listers:  listers,
+		interval:      interval,
+		maxAge:        maxAge,
+		listers:       listers,
+		initialLister: initialLister,
 	}
+	lw.name = fmt.Sprintf("%p", lw)
 	lwPager := &cache.ListWatch{ListFunc: lw.List, WatchFunc: lw.Watch}
 	return cache.NewSharedIndexInformer(lwPager, &Job{}, resyncInterval, cache.Indexers{})
 }
 
 type ListWatcher struct {
-	client   *Client
-	interval time.Duration
-	listers  []JobLister
+	client        *Client
+	interval      time.Duration
+	maxAge        time.Duration
+	listers       []JobLister
+	initialLister JobLister
+	name          string
+
+	lock     sync.Mutex
+	lastList []*Job
 }
 
-func mergeJobs(lists [][]*Job) *JobList {
+func mergeJobs(lists [][]*Job, expires time.Time) *JobList {
+	klog.Infof("excluding jobs before %s", expires)
 	if len(lists) == 1 {
-		list := make([]*Job, len(lists[0]))
-		copy(list, lists[0])
+		list := make([]*Job, 0, len(lists[0]))
+		for _, job := range lists[0] {
+			if (!job.Status.CompletionTime.IsZero() && job.Status.CompletionTime.Time.Before(expires)) || job.CreationTimestamp.Time.Before(expires) {
+				continue
+			}
+			list = append(list, job)
+		}
 		return &JobList{Items: list}
 	}
 
@@ -144,7 +169,10 @@ func mergeJobs(lists [][]*Job) *JobList {
 	jobList.Items = make([]*Job, 0, size)
 	for _, list := range lists {
 		for _, job := range list {
-			key := types.NamespacedName{Namespace: job.Namespace, Name: job.Name}
+			if (!job.Status.CompletionTime.IsZero() && job.Status.CompletionTime.Time.Before(expires)) || job.CreationTimestamp.Time.Before(expires) {
+				continue
+			}
+			key := types.NamespacedName{Namespace: job.Spec.Job, Name: job.Status.BuildID}
 			if _, ok := keys[key]; ok {
 				continue
 			}
@@ -155,9 +183,37 @@ func mergeJobs(lists [][]*Job) *JobList {
 	return &jobList
 }
 
-func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) {
+func (lw *ListWatcher) mostRecentJobs() ([]*Job, error) {
+	lw.lock.Lock()
+	list := lw.lastList
+	lw.lock.Unlock()
+	if list != nil || lw.initialLister == nil {
+		return list, nil
+	}
+
 	ctx := context.Background()
-	lists := make([][]*Job, 0, len(lw.listers))
+	list, err := lw.initialLister.ListJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lw.lock.Lock()
+	defer lw.lock.Unlock()
+	lw.lastList = list
+	return list, nil
+}
+
+func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) {
+	// keep items until they are expired by using the previous result as the seed for
+	// the next result
+	initial, err := lw.mostRecentJobs()
+	if err != nil {
+		return nil, err
+	}
+
+	// calculate the merged list from all current sources, including our last state
+	ctx := context.Background()
+	lists := make([][]*Job, 0, len(lw.listers)+1)
+	lists = append(lists, initial)
 	for _, lister := range lw.listers {
 		list, err := lister.ListJobs(ctx)
 		if err != nil {
@@ -165,7 +221,16 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 		}
 		lists = append(lists, list)
 	}
-	merged := mergeJobs(lists)
+	expires := time.Now().Add(-lw.maxAge)
+	merged := mergeJobs(lists, expires)
+
+	metricJobSize.WithLabelValues(lw.name).Set(float64(len(merged.Items)))
+
+	// remember our most recent list so that jobs that "age out" of the live view
+	// of prow jobs are still viewed by the system
+	lw.lock.Lock()
+	defer lw.lock.Unlock()
+	lw.lastList = append(lw.lastList[:0], merged.Items...)
 	return merged, nil
 }
 

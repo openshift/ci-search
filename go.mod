@@ -8,6 +8,7 @@ require (
 	github.com/docker/go-units v0.4.0
 	github.com/golang/protobuf v1.3.5
 	github.com/gorilla/mux v1.7.3
+	github.com/prometheus/client_golang v0.9.3
 	github.com/spf13/cobra v0.0.6
 	github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1 // indirect
 	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e // indirect

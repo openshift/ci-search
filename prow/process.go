@@ -19,7 +19,17 @@ import (
 
 	"github.com/openshift/ci-search/testgrid/metadata/junit"
 	"github.com/openshift/ci-search/testgrid/util/gcs"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+var metricDownloadedBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "job_downloaded_bytes",
+	Help: "The number of bytes downloaded for jobs.",
+})
+
+func init() {
+	prometheus.MustRegister(metricDownloadedBytes)
+}
 
 // Build holds data to builds stored in GCS.
 type Build = gcs.Build
@@ -417,7 +427,9 @@ func (a *LogAccumulator) downloadIfMissing(ctx context.Context, artifact *storag
 		return err
 	}
 	defer r.Close()
-	if _, err := io.Copy(w, r); err != nil {
+	n, err := io.Copy(w, r)
+	metricDownloadedBytes.Add(float64(n))
+	if err != nil {
 		w.Close()
 		os.Remove(f.Name())
 		return err
@@ -469,6 +481,7 @@ func (a *LogAccumulator) downloadIfMissingTail(ctx context.Context, artifact *st
 		os.Remove(f.Name())
 		return err
 	}
+	metricDownloadedBytes.Add(float64(length))
 	return nil
 }
 

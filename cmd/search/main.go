@@ -17,6 +17,8 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	gcpoption "google.golang.org/api/option"
 
@@ -354,25 +356,8 @@ func (o *options) Run() error {
 	}
 
 	if len(o.DeckURI) > 0 {
-		// read the index timestamp
-		var indexedAt time.Time
-		indexedAtPath := filepath.Join(o.jobsPath, ".indexed-at")
-		if data, err := ioutil.ReadFile(indexedAtPath); err == nil {
-			if value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
-				indexedAt = time.Unix(value, 0)
-				klog.Infof("Last indexed at %s", indexedAt)
-			}
-		}
-
-		now := time.Now()
-
 		if o.MaxAge > 0 {
 			klog.Infof("Results expire after %s", o.MaxAge)
-			expiredAt := now.Add(-o.MaxAge)
-			if expiredAt.After(indexedAt) {
-				klog.Infof("Last index time is older than the allowed max age, setting to %s", expiredAt)
-				indexedAt = expiredAt
-			}
 		}
 
 		u, err := url.Parse(o.DeckURI)
@@ -394,20 +379,13 @@ func (o *options) Run() error {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
 
-		jobListers := []prow.JobLister{c}
+		var initialJobLister prow.JobLister
 		if len(o.IndexBucket) > 0 {
-			jobListers = append(
-				jobListers,
-				// add the index lister after the client so that we get full job objects from deck, then
-				// underwrite our index objects
-				&prow.CachingLister{
-					Lister: prow.ListerFunc(func(ctx context.Context) ([]*prow.Job, error) {
-						return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
-					}),
-				},
-			)
+			initialJobLister = prow.ListerFunc(func(ctx context.Context) ([]*prow.Job, error) {
+				return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
+			})
 		}
-		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, jobListers...)
+		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, o.MaxAge, initialJobLister, c)
 		lister := prow.NewLister(informer.GetIndexer())
 		o.jobAccessor = lister
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
@@ -451,13 +429,25 @@ func (o *options) Run() error {
 	}
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
-		mux.HandleFunc("/chart", o.handleChart)
-		mux.HandleFunc("/chart.png", o.handleChartPNG)
-		mux.HandleFunc("/config", o.handleConfig)
-		mux.HandleFunc("/jobs", o.handleJobs)
-		mux.HandleFunc("/search", o.handleSearch)
-		mux.HandleFunc("/v2/search", o.handleSearchV2)
-		mux.HandleFunc("/", o.handleIndex)
+
+		h := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "http_duration",
+			Buckets: []float64{0.01, 0.1, 1, 10, 100},
+		}, []string{"path", "code", "method"})
+		prometheus.MustRegister(h)
+		handle := func(path string, handler http.Handler) {
+			handler = promhttp.InstrumentHandlerDuration(h.MustCurryWith(prometheus.Labels{"path": path}), handler)
+			mux.Handle(path, handler)
+		}
+
+		handle("/chart", http.HandlerFunc(o.handleChart))
+		handle("/chart.png", http.HandlerFunc(o.handleChartPNG))
+		handle("/config", http.HandlerFunc(o.handleConfig))
+		handle("/jobs", http.HandlerFunc(o.handleJobs))
+		handle("/search", http.HandlerFunc(o.handleSearch))
+		handle("/v2/search", http.HandlerFunc(o.handleSearchV2))
+		handle("/metrics", promhttp.Handler())
+		handle("/", http.HandlerFunc(o.handleIndex))
 
 		go func() {
 			klog.Infof("Listening on %s", o.ListenAddr)
