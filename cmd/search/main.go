@@ -356,25 +356,8 @@ func (o *options) Run() error {
 	}
 
 	if len(o.DeckURI) > 0 {
-		// read the index timestamp
-		var indexedAt time.Time
-		indexedAtPath := filepath.Join(o.jobsPath, ".indexed-at")
-		if data, err := ioutil.ReadFile(indexedAtPath); err == nil {
-			if value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
-				indexedAt = time.Unix(value, 0)
-				klog.Infof("Last indexed at %s", indexedAt)
-			}
-		}
-
-		now := time.Now()
-
 		if o.MaxAge > 0 {
 			klog.Infof("Results expire after %s", o.MaxAge)
-			expiredAt := now.Add(-o.MaxAge)
-			if expiredAt.After(indexedAt) {
-				klog.Infof("Last index time is older than the allowed max age, setting to %s", expiredAt)
-				indexedAt = expiredAt
-			}
 		}
 
 		u, err := url.Parse(o.DeckURI)
