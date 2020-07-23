@@ -152,6 +152,9 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 		return nil, err
 	}
 	if len(bucket) == 0 {
+		// This typically indicates that Prow changed in an unexpected way, perhaps by altering the
+		// URL it reports to jobs.
+		klog.Infof("Job URL cannot be indexed, does not match expected structure: %s", job.Status.URL)
 		return nil, nil
 	}
 
@@ -216,7 +219,7 @@ func jobPathToAttributes(path, full string) (bucket, trigger, job, buildID strin
 	if len(parts) < 5 {
 		return
 	}
-	if parts[0] != "view" || parts[1] != "gcs" {
+	if parts[0] != "view" || (parts[1] != "gcs" && parts[1] != "gs") {
 		return
 	}
 
