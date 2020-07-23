@@ -379,20 +379,13 @@ func (o *options) Run() error {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
 
-		jobListers := []prow.JobLister{c}
+		var initialJobLister prow.JobLister
 		if len(o.IndexBucket) > 0 {
-			jobListers = append(
-				jobListers,
-				// add the index lister after the client so that we get full job objects from deck, then
-				// underwrite our index objects
-				&prow.CachingLister{
-					Lister: prow.ListerFunc(func(ctx context.Context) ([]*prow.Job, error) {
-						return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
-					}),
-				},
-			)
+			initialJobLister = prow.ListerFunc(func(ctx context.Context) ([]*prow.Job, error) {
+				return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
+			})
 		}
-		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, jobListers...)
+		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, o.MaxAge, initialJobLister, c)
 		lister := prow.NewLister(informer.GetIndexer())
 		o.jobAccessor = lister
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
