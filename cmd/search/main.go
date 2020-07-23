@@ -17,6 +17,8 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	gcpoption "google.golang.org/api/option"
 
@@ -451,13 +453,25 @@ func (o *options) Run() error {
 	}
 	if len(o.ListenAddr) > 0 {
 		mux := mux.NewRouter()
-		mux.HandleFunc("/chart", o.handleChart)
-		mux.HandleFunc("/chart.png", o.handleChartPNG)
-		mux.HandleFunc("/config", o.handleConfig)
-		mux.HandleFunc("/jobs", o.handleJobs)
-		mux.HandleFunc("/search", o.handleSearch)
-		mux.HandleFunc("/v2/search", o.handleSearchV2)
-		mux.HandleFunc("/", o.handleIndex)
+
+		h := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "http_duration",
+			Buckets: []float64{0.01, 0.1, 1, 10, 100},
+		}, []string{"path", "code", "method"})
+		prometheus.MustRegister(h)
+		handle := func(path string, handler http.Handler) {
+			handler = promhttp.InstrumentHandlerDuration(h.MustCurryWith(prometheus.Labels{"path": path}), handler)
+			mux.Handle(path, handler)
+		}
+
+		handle("/chart", http.HandlerFunc(o.handleChart))
+		handle("/chart.png", http.HandlerFunc(o.handleChartPNG))
+		handle("/config", http.HandlerFunc(o.handleConfig))
+		handle("/jobs", http.HandlerFunc(o.handleJobs))
+		handle("/search", http.HandlerFunc(o.handleSearch))
+		handle("/v2/search", http.HandlerFunc(o.handleSearchV2))
+		handle("/metrics", promhttp.Handler())
+		handle("/", http.HandlerFunc(o.handleIndex))
 
 		go func() {
 			klog.Infof("Listening on %s", o.ListenAddr)
