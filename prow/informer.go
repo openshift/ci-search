@@ -19,6 +19,19 @@ import (
 	"k8s.io/klog"
 )
 
+var (
+	metricJobStats = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "prow_stats",
+		Help: "The current counts of completed runs, failed runs, and jobs.",
+	}, []string{"type"})
+)
+
+func init() {
+	prometheus.MustRegister(
+		metricJobStats,
+	)
+}
+
 var prowGR = schema.GroupResource{Group: "search.openshift.io", Resource: "prow"}
 
 // NewLister lists jobs out of a cache.
@@ -61,6 +74,7 @@ func (s *Lister) Get(name string) (*Job, error) {
 
 func (s *Lister) JobStats(name string, names sets.String, from, to time.Time) JobStats {
 	var stats JobStats
+	hasNameScope := names.Len() > 0
 
 	if len(name) == 0 {
 		jobs := make(map[string]struct{}, 500)
@@ -69,7 +83,7 @@ func (s *Lister) JobStats(name string, names sets.String, from, to time.Time) Jo
 			if !ok {
 				continue
 			}
-			if names.Len() != 0 && !names.Has(job.Spec.Job) {
+			if hasNameScope && !names.Has(job.Spec.Job) {
 				continue
 			}
 			if job.Status.CompletionTime.Time.Before(from) || job.Status.CompletionTime.Time.After(to) {
@@ -83,6 +97,12 @@ func (s *Lister) JobStats(name string, names sets.String, from, to time.Time) Jo
 			stats.Failures++
 		}
 		stats.Jobs = len(jobs)
+
+		if !hasNameScope {
+			metricJobStats.WithLabelValues("completed_runs").Set(float64(stats.Count))
+			metricJobStats.WithLabelValues("failed_runs").Set(float64(stats.Failures))
+			metricJobStats.WithLabelValues("jobs").Set(float64(stats.Jobs))
+		}
 		return stats
 	}
 
@@ -117,7 +137,7 @@ type JobLister interface {
 var metricJobSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "informer_list_jobs",
 	Help: "Prints the current number of jobs known to a jobs informer.",
-}, []string{"name"})
+}, []string{"name", "type"})
 
 func init() {
 	prometheus.MustRegister(metricJobSize)
@@ -147,19 +167,17 @@ type ListWatcher struct {
 	lastList []*Job
 }
 
-func mergeJobs(lists [][]*Job, expires time.Time) *JobList {
-	klog.Infof("excluding jobs before %s", expires)
-	if len(lists) == 1 {
-		list := make([]*Job, 0, len(lists[0]))
-		for _, job := range lists[0] {
-			if (!job.Status.CompletionTime.IsZero() && job.Status.CompletionTime.Time.Before(expires)) || job.CreationTimestamp.Time.Before(expires) {
-				continue
-			}
-			list = append(list, job)
+func jobExpired(job *Job, expires time.Time) bool {
+	if job.Status.CompletionTime.IsZero() {
+		if job.CreationTimestamp.Time.Before(expires) {
+			return true
 		}
-		return &JobList{Items: list}
+		return false
 	}
+	return job.Status.CompletionTime.Time.Before(expires)
+}
 
+func mergeJobs(lists [][]*Job, expires time.Time) (list *JobList, expiredCount int, emptyCount int) {
 	size := 0
 	for _, list := range lists {
 		size += len(list)
@@ -169,7 +187,12 @@ func mergeJobs(lists [][]*Job, expires time.Time) *JobList {
 	jobList.Items = make([]*Job, 0, size)
 	for _, list := range lists {
 		for _, job := range list {
-			if (!job.Status.CompletionTime.IsZero() && job.Status.CompletionTime.Time.Before(expires)) || job.CreationTimestamp.Time.Before(expires) {
+			if jobExpired(job, expires) {
+				expiredCount++
+				continue
+			}
+			if len(job.Spec.Job) == 0 || len(job.Status.BuildID) == 0 {
+				emptyCount++
 				continue
 			}
 			key := types.NamespacedName{Namespace: job.Spec.Job, Name: job.Status.BuildID}
@@ -180,7 +203,7 @@ func mergeJobs(lists [][]*Job, expires time.Time) *JobList {
 			jobList.Items = append(jobList.Items, job)
 		}
 	}
-	return &jobList
+	return &jobList, expiredCount, emptyCount
 }
 
 func (lw *ListWatcher) mostRecentJobs() ([]*Job, error) {
@@ -196,6 +219,8 @@ func (lw *ListWatcher) mostRecentJobs() ([]*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	metricJobSize.WithLabelValues(lw.name, "initial").Set(float64(len(list)))
+
 	lw.lock.Lock()
 	defer lw.lock.Unlock()
 	lw.lastList = list
@@ -210,10 +235,11 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 		return nil, err
 	}
 
-	// calculate the merged list from all current sources, including our last state
+	// calculate the merged list from all current sources, including our last state at
+	// the end (so we get the newer copy from the listers, and backfill any jobs that
+	// are no longer live with their last visible state)
 	ctx := context.Background()
 	lists := make([][]*Job, 0, len(lw.listers)+1)
-	lists = append(lists, initial)
 	for _, lister := range lw.listers {
 		list, err := lister.ListJobs(ctx)
 		if err != nil {
@@ -221,10 +247,14 @@ func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) 
 		}
 		lists = append(lists, list)
 	}
-	expires := time.Now().Add(-lw.maxAge)
-	merged := mergeJobs(lists, expires)
+	lists = append(lists, initial)
 
-	metricJobSize.WithLabelValues(lw.name).Set(float64(len(merged.Items)))
+	expires := time.Now().Add(-lw.maxAge)
+	merged, expired, empty := mergeJobs(lists, expires)
+
+	metricJobSize.WithLabelValues(lw.name, "expired").Set(float64(expired))
+	metricJobSize.WithLabelValues(lw.name, "empty").Set(float64(empty))
+	metricJobSize.WithLabelValues(lw.name, "current").Set(float64(len(merged.Items)))
 
 	// remember our most recent list so that jobs that "age out" of the live view
 	// of prow jobs are still viewed by the system
