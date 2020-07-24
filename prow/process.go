@@ -327,7 +327,7 @@ func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites) {
 				out = *test.Error
 			}
 			fmt.Fprintf(f, "\n\n# %s\n", test.Name)
-			fmt.Fprintf(f, out)
+			fmt.Fprint(f, out)
 		}
 	}
 
