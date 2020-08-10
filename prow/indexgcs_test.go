@@ -37,7 +37,7 @@ func Test_IndexReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := ReadFromIndex(context.Background(), client, "origin-ci-test", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.svc.ci.openshift.org"})
+	r, err := ReadFromIndex(context.Background(), client, "origin-ci-test", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.ci.openshift.org"})
 	if err != nil {
 		t.Fatal(err)
 	}

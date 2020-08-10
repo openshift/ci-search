@@ -435,7 +435,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       function refetch(interval) {
         // Currently: Reason: CORS header ‘Access-Control-Allow-Origin’ missing
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS/Errors/CORSMissingAllowOrigin
-        //d3.json('https://prow.svc.ci.openshift.org/prowjobs.js')
+        //d3.json('https://prow.ci.openshift.org/prowjobs.js')
         d3.json('jobs')
           .then(data => {
             var now = new Date()
