@@ -16,7 +16,7 @@ type Result struct {
 	// LastModified is the time when the item was last updated (job failure or bug update)
 	LastModified time.Time
 
-	// URI is the job detail page, e.g. https://prow.svc.ci.openshift.org/view/gcs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
+	// URI is the job detail page, e.g. https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
 	URI *url.URL
 
 	// FileType is the type of file where the match was found: "bug", "build-log" or "junit".

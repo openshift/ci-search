@@ -18,7 +18,7 @@ func init() {
 }
 
 func TestInformer(t *testing.T) {
-	c := NewClient(url.URL{Scheme: "https", Host: "prow.svc.ci.openshift.org", Path: "/prowjobs.js"})
+	c := NewClient(url.URL{Scheme: "https", Host: "prow.ci.openshift.org", Path: "/prowjobs.js"})
 	rt, err := rest.TransportFor(&rest.Config{})
 	if err != nil {
 		t.Fatal(err)
