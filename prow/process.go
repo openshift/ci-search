@@ -326,12 +326,7 @@ func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites) {
 			case test.Error != nil:
 				out = *test.Error
 			}
-			if len(test.ClassName) != 0 {
-				fmt.Fprintf(f, "\n\n# %s %s\n", test.ClassName, test.Name)
-			} else {
-				fmt.Fprintf(f, "\n\n# %s\n", test.Name)
-			}
-
+			fmt.Fprintf(f, "\n\n# %s\n", test.Name)
 			fmt.Fprint(f, out)
 		}
 	}
