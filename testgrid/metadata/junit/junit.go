@@ -29,6 +29,9 @@ import (
 type Suites struct {
 	XMLName xml.Name `xml:"testsuites"`
 	Suites  []Suite  `xml:"testsuite"`
+	// Unwrapped indicates this Suites object was synthesized from a junit
+	// file that did not have a wrapping <testsuites> element
+	Unwrapped bool
 }
 
 // Suite holds <testsuite/> results
@@ -103,6 +106,7 @@ func Parse(buf []byte) (Suites, error) {
 	if err != nil {
 		// Maybe it is a <testsuite/> object instead
 		suites.Suites = append([]Suite(nil), Suite{})
+		suites.Unwrapped = true
 		ie := unmarshalXML(buf, &suites.Suites[0])
 		if ie != nil {
 			// Nope, it just doesn't parse
