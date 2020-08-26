@@ -326,7 +326,14 @@ func (a *LogAccumulator) AddSuites(ctx context.Context, suites junit.Suites) {
 			case test.Error != nil:
 				out = *test.Error
 			}
-			fmt.Fprintf(f, "\n\n# %s\n", test.Name)
+			// testgrid prefixes testnames with their suitename, if the junit xml they came from
+			// has a wrapping <testsuites> element.  So keep the testnames aligned
+			// by prefixing here as well.
+			if suites.Unwrapped {
+				fmt.Fprintf(f, "\n\n# %s\n", test.Name)
+			} else {
+				fmt.Fprintf(f, "\n\n# %s.%s\n", suite.Name, test.Name)
+			}
 			fmt.Fprint(f, out)
 		}
 	}
