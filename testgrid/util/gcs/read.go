@@ -137,40 +137,11 @@ func ListBuilds(ctx context.Context, client *storage.Client, path Path) (Builds,
 	return all, nil
 }
 
-// junit_CONTEXT_TIMESTAMP_THREAD.xml
-var re = regexp.MustCompile(`./junit(_[^_]+)?(_\d+-\d+)?(_\d+)?\.xml$`)
-
-// dropPrefix removes the _ in _CONTEXT to help keep the regexp simple
-func dropPrefix(name string) string {
-	if len(name) == 0 {
-		return name
-	}
-	return name[1:]
-}
-
 func matchesSuite(obj *storage.ObjectAttrs) bool {
-	return re.MatchString(obj.Name)
-}
-
-// parseSuitesMeta returns the metadata for this junit file (nil for a non-junit file).
-//
-// Expected format: junit_context_20180102-1256-07.xml
-// Results in {
-//   "Context": "context",
-//   "Timestamp": "20180102-1256",
-//   "Thread": "07",
-// }
-func parseSuitesMeta(obj *storage.ObjectAttrs) map[string]string {
-	mat := re.FindStringSubmatch(obj.Name)
-	if mat == nil {
-		return nil
+	if strings.HasPrefix(obj.Name, "./junit") && strings.HasSuffix(obj.Name, ".xml"){
+		return true
 	}
-	return map[string]string{
-		"Context":   dropPrefix(mat[1]),
-		"Timestamp": dropPrefix(mat[2]),
-		"Thread":    dropPrefix(mat[3]),
-	}
-
+	return false
 }
 
 // readJSON will decode the json object stored in GCS.
