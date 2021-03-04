@@ -12,6 +12,7 @@ require (
 	github.com/spf13/cobra v0.0.6
 	github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1 // indirect
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
+	gonum.org/v1/plot v0.8.1
 	google.golang.org/api v0.32.0
 	k8s.io/api v0.18.0 // indirect
 	k8s.io/apimachinery v0.18.0
