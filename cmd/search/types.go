@@ -46,8 +46,12 @@ type Index struct {
 	// SearchType excludes jobs whose Result.FileType does not match.
 	SearchType string
 
-	// Job excludes jobs whose Result.Name does not match.
-	Job *regexp.Regexp
+	// JobFilter only includes jobs that match the filter.
+	JobFilter func(name string) bool
+	// IncludeName is the string value a regular expression to filter job results.
+	IncludeName string
+	// ExcludeName is the string value a regular expression to filter job results.
+	ExcludeName string
 
 	// MaxAge excludes jobs which failed longer than MaxAge ago.
 	MaxAge time.Duration
@@ -71,6 +75,26 @@ type Index struct {
 	GroupByJob bool
 }
 
+func (i *Index) Query() url.Values {
+	v := make(url.Values)
+	v["search"] = i.Search
+	v.Set("mode", i.Mode)
+	v.Set("searchType", i.SearchType)
+	v.Set("maxAge", i.MaxAge.String())
+	v.Set("name", i.IncludeName)
+	v.Set("excludeName", i.ExcludeName)
+	v.Set("maxMatches", strconv.Itoa(i.MaxMatches))
+	v.Set("maxBytes", strconv.FormatInt(i.MaxBytes, 10))
+	v.Set("context", strconv.Itoa(i.Context))
+	v.Set("wrapLines", strconv.FormatBool(i.WrapLines))
+	if i.GroupByJob {
+		v.Set("groupByJob", "job")
+	} else {
+		v.Set("groupByJob", "none")
+	}
+	return v
+}
+
 func (i *Index) String() string {
 	if i == nil {
 		return "nil"
@@ -80,10 +104,11 @@ func (i *Index) String() string {
 	fmt.Fprintf(sb, "Mode=%s", i.Mode)
 	fmt.Fprintf(sb, " Search=%v", i.Search)
 	fmt.Fprintf(sb, " SearchType=%s", i.SearchType)
-	if i.Job != nil {
-		fmt.Fprintf(sb, " Job=%s", i.Job.String())
-	} else {
-		sb.WriteString(" Job=nil")
+	if len(i.IncludeName) > 0 {
+		fmt.Fprintf(sb, " Include=%s", i.IncludeName)
+	}
+	if len(i.ExcludeName) > 0 {
+		fmt.Fprintf(sb, " Exclude=%s", i.ExcludeName)
 	}
 	sb.WriteRune('}')
 	return sb.String()
@@ -140,15 +165,34 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		return nil, fmt.Errorf("search type must be 'bug', 'junit', 'build-log', or 'all'")
 	}
 
+	var includeRE *regexp.Regexp
 	if value := req.FormValue("name"); len(value) > 0 || mode == "chart" {
-		if len(value) == 0 {
+		if mode == "chart" && len(value) == 0 {
 			value = "-e2e-"
 		}
 		var err error
-		index.Job, err = regexp.Compile(value)
+		includeRE, err = regexp.Compile(value)
 		if err != nil {
 			return nil, fmt.Errorf("name is an invalid regular expression: %v", err)
 		}
+		index.IncludeName = value
+	}
+	var excludeRE *regexp.Regexp
+	if value := req.FormValue("excludeName"); len(value) > 0 {
+		var err error
+		excludeRE, err = regexp.Compile(value)
+		if err != nil {
+			return nil, fmt.Errorf("name is an invalid regular expression: %v", err)
+		}
+		index.ExcludeName = value
+	}
+	switch {
+	case includeRE != nil && excludeRE != nil:
+		index.JobFilter = func(name string) bool { return includeRE.MatchString(name) && !excludeRE.MatchString(name) }
+	case includeRE != nil:
+		index.JobFilter = includeRE.MatchString
+	case excludeRE != nil:
+		index.JobFilter = excludeRE.MatchString
 	}
 
 	if value := req.FormValue("maxMatches"); len(value) > 0 {

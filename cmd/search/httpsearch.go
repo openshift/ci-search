@@ -136,7 +136,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			klog.Errorf("Failed to compute job URI for %q", name)
 			return nil
 		}
-		if metadata.FileType != "bug" && index.Job != nil && !index.Job.MatchString(metadata.Name) {
+		if metadata.FileType != "bug" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 			return nil
 		}
 		uri := metadata.URI.String()
@@ -245,7 +245,7 @@ func (o *options) orderedSearchResults(ctx context.Context, index *Index) (*Sear
 			klog.Errorf("Failed to compute job URI for %q", name)
 			return nil
 		}
-		if metadata.FileType != "bug" && index.Job != nil && !index.Job.MatchString(metadata.Name) {
+		if metadata.FileType != "bug" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 			return nil
 		}
 		switch metadata.FileType {

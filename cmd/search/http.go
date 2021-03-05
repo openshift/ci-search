@@ -10,7 +10,9 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -148,11 +150,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
-	var jobRegex string
-	if index.Job != nil {
-		jobRegex = index.Job.String()
-	}
-
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -171,7 +168,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 		strings.Join(contextOptions, ""),
 		strings.Join(searchTypeOptions, ""),
-		jobRegex,
+		template.HTMLEscapeString(index.IncludeName),
+		template.HTMLEscapeString(index.ExcludeName),
 		strconv.Itoa(index.MaxMatches),
 		strconv.FormatInt(index.MaxBytes, 10),
 		groupByOptions,
@@ -181,7 +179,35 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
 		stats := o.Stats()
+
 		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs)
+		flusher.Flush()
+
+		buf := make([]byte, 0, 16384)
+		buf = append(buf, []byte("<script>let data = [\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, bucket.T, 10)
+		}
+		buf = append(buf, []byte("],\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, int64(bucket.Jobs), 10)
+		}
+		buf = append(buf, []byte("],\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, int64(bucket.FailedJobs), 10)
+		}
+		buf = append(buf, []byte("]\n]</script>")...)
+		writer.Write(buf)
+		fmt.Fprintf(writer, htmlEmptyPageGraph)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
@@ -235,7 +261,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of runs match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
 					} else {
 						percentMatch := math.Round(float64(len(job.Instances)) / float64(stats.Failures) * 100)
-						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of failures match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
+						percentImpact := math.Round(float64(len(job.Instances)) / float64(stats.Count) * 100)
+						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of failures match = %d%% impact</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch), int(percentImpact))
 					}
 				}
 				numRuns += len(job.Instances)
@@ -246,7 +273,12 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 				} else {
 					uri.Path = path.Join("job-history", o.IndexBucket, "logs", job.Name)
 				}
-				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), contents)
+				copied := *index
+				copied.MaxAge = o.MaxAge
+				copied.ExcludeName = ""
+				copied.IncludeName = fmt.Sprintf("^%s$", regexp.QuoteMeta(job.Name))
+				uriAll := url.URL{Path: "/", RawQuery: copied.Query().Encode()}
+				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a> <a href=\"%s\">(all)</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), template.HTMLEscapeString(uriAll.String()), contents)
 				for _, instance := range job.Instances {
 					for _, match := range instance.Matches {
 						age, _ := formatAge(match.LastModified.Time, start, index.MaxAge)
@@ -271,13 +303,13 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 		stats := o.jobAccessor.JobStats("", result.JobNames, start.Add(-index.MaxAge), start)
 
-		title := fmt.Sprintf("%d runs, %d failing runs, %d matched runs,%d jobs, %d matched jobs", stats.Count, stats.Failures, numRuns, stats.Jobs, len(result.Jobs))
+		title := fmt.Sprintf("%d runs, %d failing runs, %d matched runs, %d jobs, %d matched jobs", stats.Count, stats.Failures, numRuns, stats.Jobs, len(result.Jobs))
 		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em title="%s">`, template.HTMLEscapeString(title))
 		if stats.Count > 0 {
-			percentJobs := float64(len(result.Jobs)) / float64(stats.Jobs) * 100
+			percentImpact := float64(numRuns) / float64(stats.Count) * 100
 			percentRuns := float64(numRuns) / float64(stats.Failures) * 100
 			percentFailures := float64(stats.Failures) / float64(stats.Count) * 100
-			fmt.Fprintf(writer, `Across %d runs and %d jobs (%.2f%% failed), matched %.2f%% of failing runs and %.2f%% of jobs in %s`, stats.Count, stats.Jobs, percentFailures, percentRuns, percentJobs, time.Now().Sub(start).Truncate(time.Millisecond))
+			fmt.Fprintf(writer, `Found in %.2f%% of runs (%.2f%% of failures) across %d total runs and %d jobs (%.2f%% failed) in %s`, percentImpact, percentRuns, stats.Count, stats.Jobs, percentFailures, time.Now().Sub(start).Truncate(time.Millisecond))
 		} else {
 			fmt.Fprintf(writer, `%d runs matched in %s`, numRuns, time.Now().Sub(start).Truncate(time.Millisecond))
 		}
@@ -295,7 +327,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 			fmt.Fprintf(writer, htmlPageEnd)
 			return
 		}
-		klog.V(2).Infof("Search %q over %q for job %s completed with %d results", index.Search[0], index.SearchType, index.Job, count)
+		klog.V(2).Infof("Search %q over %q for job %s/%s completed with %d results", index.Search[0], index.SearchType, index.IncludeName, index.ExcludeName, count)
 		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>`)
 		fmt.Fprintf(writer, `Found %d results in %s`, count, time.Now().Sub(start).Truncate(time.Millisecond))
 		fmt.Fprintf(writer, `</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, template.HTMLEscapeString(req.URL.RawQuery))
@@ -441,7 +473,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				drop = true
 				return nil
 			}
-			if index.Job != nil && !index.Job.MatchString(metadata.Name) {
+			if index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 				drop = true
 				return nil
 			}
@@ -576,7 +608,8 @@ const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><title>%s</title>
-<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/bootstrap-4.4.1.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/uPlot.min.css">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <style>
 #results.nowrap PRE { white-space: pre; }
@@ -607,7 +640,8 @@ const htmlIndexForm = `
 	</div>
 	<div class="input-group input-group-sm mb-3">
 		<div class="input-group-prepend"><span class="input-group-text" for="name">Job:</span></div>
-		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="name" value="%s" placeholder="Filter job or bug names by regex ...">
+		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="name" value="%s" placeholder="Focus job or bug names by regex ...">
+		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="excludeName" value="%s" placeholder="Skip job or bug names by regex ...">
 		<input title="The number of matches per job / file to show" autocomplete="off" class="form-control col-1" name="maxMatches" value="%s" placeholder="Max matches per job or bug">
 		<input title="The maximum number of bytes for the response" autocomplete="off" class="form-control col-1" name="maxBytes" value="%s" placeholder="Max bytes to return">
 		<select title="Group results by job (with stats) or no grouping" name="groupBy" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>
@@ -637,6 +671,124 @@ const htmlEmptyPage = `
 <li><code>^release-</code> - all jobs that start with 'release-'</li>
 <li><code>UpgradeBlocker</code> - bugs that have 'UpgradeBlocker' in their title</li>
 </ul>
+<div id="width"></div>
+<p id="graph">
 <p>Currently indexing %s across %d results, %d failed jobs of %d, and %d bugs</p>
 </div>
+`
+const htmlEmptyPageGraph = `
+<style>
+#overlay {
+	position: absolute;
+	background: rgba(0, 0, 0, 0.8);
+	padding: 0.5rem;
+	margin: 0.75rem;
+	color: #fff;
+	z-index: 10;
+	pointer-events: none;
+}
+</style>
+<script src="/static/uPlot.iife.min.js"></script>
+<script src="/static/placement.min.js"></script>
+<script>
+let longDateHourMin = uPlot.fmtDate('{YYYY}-{MM}-{DD} {h}:{mm}{aa}');
+
+function tooltipPlugin(opts) {
+	let over, bound, bLeft, bTop;
+
+	function syncBounds() {
+		let bbox = over.getBoundingClientRect();
+		bLeft = bbox.left;
+		bTop = bbox.top;
+	}
+
+	const overlay = document.createElement("div");
+	overlay.id = "overlay";
+	overlay.style.display = "none";
+	overlay.style.position = "absolute";
+	document.body.appendChild(overlay);
+
+	return {
+		hooks: {
+			init: u => {
+				over = u.root.querySelector(".u-over");
+
+				bound = over;
+			//	bound = document.body;
+
+				over.onmouseenter = () => {
+					overlay.style.display = "block";
+				};
+
+				over.onmouseleave = () => {
+					overlay.style.display = "none";
+				};
+			},
+			setSize: u => {
+				syncBounds();
+			},
+			setCursor: u => {
+				const { left, top, idx } = u.cursor;
+				const x = u.data[0][idx];
+				const y = u.data[1][idx];
+				const z = u.data[2][idx];
+				const anchor = { left: left + bLeft, top: top + bTop };
+				overlay.textContent = ` + "`" + `${z} failed of ${y}` + "`" + `;
+				placement(overlay, anchor, "right", "start", { bound });
+			}
+		}
+	};
+}
+function getSize() { 
+	let o = document.getElementById("width")
+	let w = o.scrollWidth
+	if (w < 320)
+		div = 2
+	else if (w < 1024)
+		div = (w - 320) / (1024-320) * 6 + 2
+	else
+		div = 8
+	return { width: w, height: w / div,	} 
+}
+const opts = {
+	legend: {show: false},
+	...getSize(),
+	plugins: [
+		tooltipPlugin(),
+	],
+	series: [
+		{},
+		{
+			label: "Jobs",
+			values: (u, sidx, idx) => {
+				let date = new Date(data[0][idx] * 1e3);
+				return {
+					Time: longDateHourMin(date),
+					Value: data[sidx][idx],
+				};
+			},
+			stroke: "blue",
+			fill: "rgba(0,0,255,0.05)",
+		},
+		{
+			label: "Failed Jobs",
+			values: (u, sidx, idx) => {
+				let date = new Date(data[0][idx] * 1e3);
+				return {
+					Time: longDateHourMin(date),
+					Value: data[sidx][idx],
+				};
+			},
+			value: (u, v) => v == null ? "-" : v.toFixed(1) + "%%",
+			stroke: "red",
+			fill: "rgba(255,0,0,0.05)",
+		},
+	],
+};
+
+if (data[0].length > 0) {
+	let u = new uPlot(opts, data, document.getElementById("graph"));
+	window.addEventListener("resize", e => { u.setSize(getSize()); })
+}
+</script>
 `

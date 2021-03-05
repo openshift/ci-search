@@ -40,16 +40,19 @@ func (l *CachingLister) ListJobs(ctx context.Context) ([]*Job, error) {
 // ReadFromIndex reads jobs from the named GCS bucket index (managed by a cloud function that watches for finished jobs) and returns
 // them. Jobs older than maxAge are not loaded. statusURL will form the status URL for a given job if the job's link attribute in the
 // index can be parsed.
-func ReadFromIndex(ctx context.Context, client *storage.Client, bucket, index string, maxAge time.Duration, statusURL url.URL) ([]*Job, error) {
-	start := time.Now()
-	jobs := make([]*Job, 0, 2048)
+func ReadFromIndex(ctx context.Context, client *storage.Client, bucket, indexName string, maxAge time.Duration, statusURL url.URL) ([]*Job, error) {
+	index := &Index{
+		Bucket:    bucket,
+		IndexName: indexName,
+	}
 
+	start := time.Now()
+	index.FromTime(start.Add(-maxAge))
+	index.ToTime(start)
+
+	jobs := make([]*Job, 0, 2048)
 	i := 0
-	if err := readJobRange(ctx, client.Bucket(bucket), index, start.Add(-maxAge), start, func(attr *storage.ObjectAttrs) error {
-		link, ok := attr.Metadata["link"]
-		if !ok {
-			return nil
-		}
+	if err := index.EachJob(ctx, client, 0, statusURL, func(job Job, attr *storage.ObjectAttrs) error {
 		state, ok := attr.Metadata["state"]
 		if !ok {
 			return nil
@@ -70,32 +73,11 @@ func ReadFromIndex(ctx context.Context, client *storage.Client, bucket, index st
 		default:
 			return nil
 		}
-		statusURL.Path = "/view/gcs/" + strings.TrimPrefix(link, "gs://")
-		deckURL := statusURL.String()
-
-		_, _, jobName, buildID, _, err := jobPathToAttributes(statusURL.Path, deckURL)
-		if err != nil {
-			klog.V(7).Infof("Unable to parse indexed link to a valid job: %s", link)
-			return nil
-		}
-
 		i++
-		job := &Job{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "",
-				Name:      fmt.Sprintf("gcs-%d", i),
-			},
-			Spec: JobSpec{
-				Job: jobName,
-			},
-			Status: JobStatus{
-				State:          state,
-				URL:            deckURL,
-				CompletionTime: metav1.Time{Time: time.Unix(completed, 0)},
-				BuildID:        buildID,
-			},
-		}
-		jobs = append(jobs, job)
+		job.Name = fmt.Sprintf("gcs-%d", i)
+		job.Status.State = state
+		job.Status.CompletionTime = metav1.Time{Time: time.Unix(completed, 0)}
+		jobs = append(jobs, &job)
 		return nil
 	}); err != nil {
 		if err == ctx.Err() {
@@ -105,6 +87,103 @@ func ReadFromIndex(ctx context.Context, client *storage.Client, bucket, index st
 	}
 	klog.V(5).Infof("Found %d jobs in %s", len(jobs), time.Now().Sub(start))
 	return jobs, nil
+}
+
+var (
+	ErrSkip = fmt.Errorf("skip index data")
+	ErrStop = fmt.Errorf("stop index scan")
+)
+
+type Index struct {
+	Bucket    string
+	IndexName string
+
+	FromKey string
+	ToKey   string
+}
+
+func (i *Index) FromTime(t time.Time) {
+	i.FromKey = path.Join("index", i.IndexName, t.Format(time.RFC3339))
+}
+
+func (i *Index) ToTime(t time.Time) {
+	i.ToKey = path.Join("index", i.IndexName, t.Format(time.RFC3339))
+}
+
+func (i *Index) Scan(ctx context.Context, client *storage.Client, limit int64, fn func(attr *storage.ObjectAttrs) error) error {
+	bucket := client.Bucket(i.Bucket)
+	prefix := path.Join("index", i.IndexName) + "/"
+
+	query := &storage.Query{
+		Prefix:      prefix,
+		StartOffset: i.FromKey,
+		EndOffset:   i.ToKey,
+	}
+	query.SetAttrSelection([]string{"Name", "Size", "Metadata"})
+	it := bucket.Objects(ctx, query)
+
+	for {
+		attr, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := fn(attr); err != nil {
+			return err
+		}
+		limit--
+		if limit == 0 {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (i *Index) EachJob(ctx context.Context, client *storage.Client, limit int64, statusURL url.URL, fn func(partialJob Job, attr *storage.ObjectAttrs) error) error {
+	if err := i.Scan(ctx, client, limit, func(attr *storage.ObjectAttrs) error {
+		link, ok := attr.Metadata["link"]
+		if !ok {
+			return nil
+		}
+
+		statusURL.Path = "/view/gcs/" + strings.TrimPrefix(link, "gs://")
+		deckURL := statusURL.String()
+
+		_, _, jobName, buildID, _, err := jobPathToAttributes(statusURL.Path, deckURL)
+		if err != nil {
+			klog.V(7).Infof("Unable to parse indexed link to a valid job: %s", link)
+			return nil
+		}
+
+		err = fn(Job{
+			Spec: JobSpec{
+				Job: jobName,
+			},
+			Status: JobStatus{
+				URL:     deckURL,
+				BuildID: buildID,
+			},
+		}, attr)
+
+		switch {
+		case err == ErrSkip:
+			return nil
+		case err == ErrStop:
+			return err
+		case err != nil:
+			return err
+		}
+		return nil
+	}); err != nil && err != ErrStop {
+		if err == ctx.Err() {
+			return err
+		}
+	}
+	return nil
+
 }
 
 const (
