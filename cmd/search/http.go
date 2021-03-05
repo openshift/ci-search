@@ -179,7 +179,35 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	// display the empty results page
 	if len(index.Search[0]) == 0 {
 		stats := o.Stats()
+
 		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs)
+		flusher.Flush()
+
+		buf := make([]byte, 0, 16384)
+		buf = append(buf, []byte("<script>let data = [\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, bucket.T, 10)
+		}
+		buf = append(buf, []byte("],\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, int64(bucket.Jobs), 10)
+		}
+		buf = append(buf, []byte("],\n[")...)
+		for i, bucket := range stats.Buckets {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = strconv.AppendInt(buf, int64(bucket.FailedJobs), 10)
+		}
+		buf = append(buf, []byte("]\n]</script>")...)
+		writer.Write(buf)
+		fmt.Fprintf(writer, htmlEmptyPageGraph)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
 	}
@@ -580,7 +608,8 @@ const htmlPageStart = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><title>%s</title>
-<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/bootstrap-4.4.1.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/uPlot.min.css">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <style>
 #results.nowrap PRE { white-space: pre; }
@@ -642,6 +671,124 @@ const htmlEmptyPage = `
 <li><code>^release-</code> - all jobs that start with 'release-'</li>
 <li><code>UpgradeBlocker</code> - bugs that have 'UpgradeBlocker' in their title</li>
 </ul>
+<div id="width"></div>
+<p id="graph">
 <p>Currently indexing %s across %d results, %d failed jobs of %d, and %d bugs</p>
 </div>
+`
+const htmlEmptyPageGraph = `
+<style>
+#overlay {
+	position: absolute;
+	background: rgba(0, 0, 0, 0.8);
+	padding: 0.5rem;
+	margin: 0.75rem;
+	color: #fff;
+	z-index: 10;
+	pointer-events: none;
+}
+</style>
+<script src="/static/uPlot.iife.min.js"></script>
+<script src="/static/placement.min.js"></script>
+<script>
+let longDateHourMin = uPlot.fmtDate('{YYYY}-{MM}-{DD} {h}:{mm}{aa}');
+
+function tooltipPlugin(opts) {
+	let over, bound, bLeft, bTop;
+
+	function syncBounds() {
+		let bbox = over.getBoundingClientRect();
+		bLeft = bbox.left;
+		bTop = bbox.top;
+	}
+
+	const overlay = document.createElement("div");
+	overlay.id = "overlay";
+	overlay.style.display = "none";
+	overlay.style.position = "absolute";
+	document.body.appendChild(overlay);
+
+	return {
+		hooks: {
+			init: u => {
+				over = u.root.querySelector(".u-over");
+
+				bound = over;
+			//	bound = document.body;
+
+				over.onmouseenter = () => {
+					overlay.style.display = "block";
+				};
+
+				over.onmouseleave = () => {
+					overlay.style.display = "none";
+				};
+			},
+			setSize: u => {
+				syncBounds();
+			},
+			setCursor: u => {
+				const { left, top, idx } = u.cursor;
+				const x = u.data[0][idx];
+				const y = u.data[1][idx];
+				const z = u.data[2][idx];
+				const anchor = { left: left + bLeft, top: top + bTop };
+				overlay.textContent = ` + "`" + `${z} failed of ${y}` + "`" + `;
+				placement(overlay, anchor, "right", "start", { bound });
+			}
+		}
+	};
+}
+function getSize() { 
+	let o = document.getElementById("width")
+	let w = o.scrollWidth
+	if (w < 320)
+		div = 2
+	else if (w < 1024)
+		div = (w - 320) / (1024-320) * 6 + 2
+	else
+		div = 8
+	return { width: w, height: w / div,	} 
+}
+const opts = {
+	legend: {show: false},
+	...getSize(),
+	plugins: [
+		tooltipPlugin(),
+	],
+	series: [
+		{},
+		{
+			label: "Jobs",
+			values: (u, sidx, idx) => {
+				let date = new Date(data[0][idx] * 1e3);
+				return {
+					Time: longDateHourMin(date),
+					Value: data[sidx][idx],
+				};
+			},
+			stroke: "blue",
+			fill: "rgba(0,0,255,0.05)",
+		},
+		{
+			label: "Failed Jobs",
+			values: (u, sidx, idx) => {
+				let date = new Date(data[0][idx] * 1e3);
+				return {
+					Time: longDateHourMin(date),
+					Value: data[sidx][idx],
+				};
+			},
+			value: (u, v) => v == null ? "-" : v.toFixed(1) + "%%",
+			stroke: "red",
+			fill: "rgba(255,0,0,0.05)",
+		},
+	],
+};
+
+if (data[0].length > 0) {
+	let u = new uPlot(opts, data, document.getElementById("graph"));
+	window.addEventListener("resize", e => { u.setSize(getSize()); })
+}
+</script>
 `

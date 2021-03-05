@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/pkg/bindata"
 	"github.com/openshift/ci-search/pkg/proc"
 	"github.com/openshift/ci-search/prow"
 )
@@ -125,6 +127,14 @@ type IndexStats struct {
 
 	Jobs       int
 	FailedJobs int
+
+	Buckets []JobCountBucket
+}
+
+type JobCountBucket struct {
+	T          int64
+	Jobs       int
+	FailedJobs int
 }
 
 // Stats returns aggregate statistics for the indexed paths.
@@ -132,12 +142,57 @@ func (o *options) Stats() IndexStats {
 	j := o.jobsIndex.Stats()
 	b := o.bugs.Stats()
 
-	jobs, _ := o.jobAccessor.List(labels.Everything())
 	var totalJobs, failedJobs int
-	for _, job := range jobs {
-		totalJobs++
-		if job.Status.State != "success" {
-			failedJobs++
+	jobs, _ := o.jobAccessor.List(labels.Everything())
+	var buckets []JobCountBucket
+	if len(jobs) > 1 {
+		var min, max int64 = math.MaxInt64, 0
+		for _, job := range jobs {
+			t := job.Status.CompletionTime.Time.Unix()
+			if t <= 0 {
+				t = job.Status.StartTime.Time.Unix()
+			}
+			if t < 0 {
+				continue
+			}
+			if t < min {
+				min = t
+			}
+			if t > max {
+				max = t
+			}
+		}
+		begin := time.Unix(min, 0).Truncate(time.Hour).Unix()
+		bins := (max-begin)/3600 + 1
+		buckets = make([]JobCountBucket, bins)
+		for i := range buckets {
+			buckets[i].T = begin + int64(i)*3600
+		}
+		for _, job := range jobs {
+			failed := job.Status.State != "success"
+			totalJobs++
+			if failed {
+				failedJobs++
+			}
+			t := job.Status.CompletionTime.Time.Unix()
+			if t <= 0 {
+				t = job.Status.StartTime.Time.Unix()
+			}
+			if t <= 0 {
+				continue
+			}
+			i := (t - begin) / 3600
+			buckets[i].Jobs++
+			if failed {
+				buckets[i].FailedJobs++
+			}
+		}
+	} else {
+		for _, job := range jobs {
+			totalJobs++
+			if job.Status.State != "success" {
+				failedJobs++
+			}
 		}
 	}
 	return IndexStats{
@@ -146,6 +201,7 @@ func (o *options) Stats() IndexStats {
 		Bugs:       b.Bugs,
 		Jobs:       totalJobs,
 		FailedJobs: failedJobs,
+		Buckets:    buckets,
 	}
 }
 
@@ -440,6 +496,7 @@ func (o *options) Run() error {
 			mux.Handle(path, handler)
 		}
 
+		mux.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(bindata.AssetFile())))
 		handle("/chart", http.HandlerFunc(o.handleChart))
 		handle("/chart.png", http.HandlerFunc(o.handleChartPNG))
 		handle("/config", http.HandlerFunc(o.handleConfig))
