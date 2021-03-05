@@ -66,7 +66,7 @@ func main() {
 	flag.AddGoFlag(original.Lookup("v"))
 
 	flag.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
-	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "Disabled) The interval to index jobs.")
+	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
 	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")

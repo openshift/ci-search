@@ -10,7 +10,9 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -148,11 +150,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
-	var jobRegex string
-	if index.Job != nil {
-		jobRegex = index.Job.String()
-	}
-
 	writer := encodedWriter(w, req)
 	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -171,7 +168,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 		strings.Join(contextOptions, ""),
 		strings.Join(searchTypeOptions, ""),
-		jobRegex,
+		template.HTMLEscapeString(index.IncludeName),
+		template.HTMLEscapeString(index.ExcludeName),
 		strconv.Itoa(index.MaxMatches),
 		strconv.FormatInt(index.MaxBytes, 10),
 		groupByOptions,
@@ -235,7 +233,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of runs match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
 					} else {
 						percentMatch := math.Round(float64(len(job.Instances)) / float64(stats.Failures) * 100)
-						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of failures match</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch))
+						percentImpact := math.Round(float64(len(job.Instances)) / float64(stats.Count) * 100)
+						contents = fmt.Sprintf(" - <em title=\"%s\">%d runs, %d%% failed, %d%% of failures match = %d%% impact</em>", template.HTMLEscapeString(title), stats.Count, int(percentFail), int(percentMatch), int(percentImpact))
 					}
 				}
 				numRuns += len(job.Instances)
@@ -246,7 +245,12 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 				} else {
 					uri.Path = path.Join("job-history", o.IndexBucket, "logs", job.Name)
 				}
-				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), contents)
+				copied := *index
+				copied.MaxAge = o.MaxAge
+				copied.ExcludeName = ""
+				copied.IncludeName = fmt.Sprintf("^%s$", regexp.QuoteMeta(job.Name))
+				uriAll := url.URL{Path: "/", RawQuery: copied.Query().Encode()}
+				fmt.Fprintf(bw, "<tr><td colspan=\"4\"><a target=\"_blank\" href=\"%s\">%s</a> <a href=\"%s\">(all)</a>%s</td></tr>\n", template.HTMLEscapeString(uri.String()), template.HTMLEscapeString(job.Name), template.HTMLEscapeString(uriAll.String()), contents)
 				for _, instance := range job.Instances {
 					for _, match := range instance.Matches {
 						age, _ := formatAge(match.LastModified.Time, start, index.MaxAge)
@@ -271,13 +275,13 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 		stats := o.jobAccessor.JobStats("", result.JobNames, start.Add(-index.MaxAge), start)
 
-		title := fmt.Sprintf("%d runs, %d failing runs, %d matched runs,%d jobs, %d matched jobs", stats.Count, stats.Failures, numRuns, stats.Jobs, len(result.Jobs))
+		title := fmt.Sprintf("%d runs, %d failing runs, %d matched runs, %d jobs, %d matched jobs", stats.Count, stats.Failures, numRuns, stats.Jobs, len(result.Jobs))
 		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em title="%s">`, template.HTMLEscapeString(title))
 		if stats.Count > 0 {
-			percentJobs := float64(len(result.Jobs)) / float64(stats.Jobs) * 100
+			percentImpact := float64(numRuns) / float64(stats.Count) * 100
 			percentRuns := float64(numRuns) / float64(stats.Failures) * 100
 			percentFailures := float64(stats.Failures) / float64(stats.Count) * 100
-			fmt.Fprintf(writer, `Across %d runs and %d jobs (%.2f%% failed), matched %.2f%% of failing runs and %.2f%% of jobs in %s`, stats.Count, stats.Jobs, percentFailures, percentRuns, percentJobs, time.Now().Sub(start).Truncate(time.Millisecond))
+			fmt.Fprintf(writer, `Found in %.2f%% of runs (%.2f%% of failures) across %d total runs and %d jobs (%.2f%% failed) in %s`, percentImpact, percentRuns, stats.Count, stats.Jobs, percentFailures, time.Now().Sub(start).Truncate(time.Millisecond))
 		} else {
 			fmt.Fprintf(writer, `%d runs matched in %s`, numRuns, time.Now().Sub(start).Truncate(time.Millisecond))
 		}
@@ -295,7 +299,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 			fmt.Fprintf(writer, htmlPageEnd)
 			return
 		}
-		klog.V(2).Infof("Search %q over %q for job %s completed with %d results", index.Search[0], index.SearchType, index.Job, count)
+		klog.V(2).Infof("Search %q over %q for job %s/%s completed with %d results", index.Search[0], index.SearchType, index.IncludeName, index.ExcludeName, count)
 		fmt.Fprintf(writer, `<p style="position:absolute; top: -2rem;" class="small"><em>`)
 		fmt.Fprintf(writer, `Found %d results in %s`, count, time.Now().Sub(start).Truncate(time.Millisecond))
 		fmt.Fprintf(writer, `</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, template.HTMLEscapeString(req.URL.RawQuery))
@@ -441,7 +445,7 @@ func renderMatches(ctx context.Context, w io.Writer, index *Index, generator Com
 				drop = true
 				return nil
 			}
-			if index.Job != nil && !index.Job.MatchString(metadata.Name) {
+			if index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 				drop = true
 				return nil
 			}
@@ -607,7 +611,8 @@ const htmlIndexForm = `
 	</div>
 	<div class="input-group input-group-sm mb-3">
 		<div class="input-group-prepend"><span class="input-group-text" for="name">Job:</span></div>
-		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="name" value="%s" placeholder="Filter job or bug names by regex ...">
+		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="name" value="%s" placeholder="Focus job or bug names by regex ...">
+		<input title="A regular expression that matches the name of a job or the title of a bug" class="form-control col-auto" name="excludeName" value="%s" placeholder="Skip job or bug names by regex ...">
 		<input title="The number of matches per job / file to show" autocomplete="off" class="form-control col-1" name="maxMatches" value="%s" placeholder="Max matches per job or bug">
 		<input title="The maximum number of bytes for the response" autocomplete="off" class="form-control col-1" name="maxBytes" value="%s" placeholder="Max bytes to return">
 		<select title="Group results by job (with stats) or no grouping" name="groupBy" class="form-control custom-select col-1" onchange="this.form.submit();">%s</select>

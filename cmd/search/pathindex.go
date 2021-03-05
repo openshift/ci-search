@@ -230,13 +230,13 @@ func (i *pathIndex) SearchPaths(index *Index, jobNames sets.String) ([]string, e
 			klog.V(2).Infof("Stopped path index at %s because it is before %s", path.path, oldest)
 			break
 		}
-		if index.Job != nil {
+		if index.JobFilter != nil {
 			// Paths should be .../job/build/file - isolate the job and verify it matches the job regex
 			if i := strings.LastIndex(path.path, string(filepath.Separator)); i != -1 {
 				if j := strings.LastIndex(path.path[:i], string(filepath.Separator)); j != -1 {
 					if k := strings.LastIndex(path.path[:j], string(filepath.Separator)); k != -1 {
 						jobName := path.path[k+1 : j]
-						if !index.Job.MatchString(jobName) {
+						if !index.JobFilter(jobName) {
 							continue
 						}
 						if jobNames != nil {
