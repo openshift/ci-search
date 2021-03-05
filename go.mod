@@ -5,9 +5,11 @@ go 1.13
 require (
 	cloud.google.com/go/storage v1.12.0
 	github.com/docker/go-units v0.4.0
+	github.com/go-bindata/go-bindata v3.1.2+incompatible // indirect
 	github.com/golang/protobuf v1.4.2
 	github.com/gorilla/mux v1.7.3
 	github.com/jmoiron/sqlx v1.3.1
+	github.com/pkg/profile v1.5.0
 	github.com/prometheus/client_golang v0.9.3
 	github.com/spf13/cobra v0.0.6
 	github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1 // indirect
