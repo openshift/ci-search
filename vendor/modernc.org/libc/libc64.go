@@ -7,8 +7,8 @@
 package libc // import "modernc.org/libc"
 
 type (
-	RawMem   [1<<50 - 1]byte
-	RawMem64 [1<<46 - 1]uint64
+	// RawMem represents the biggest byte array the runtime can handle
+	RawMem [1<<50 - 1]byte
 
 	// 48-5*8 = 8 bytes left to pad
 	stackHeaderPadding struct {

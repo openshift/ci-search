@@ -103,11 +103,11 @@ type Index struct {
 }
 
 func (i *Index) FromTime(t time.Time) {
-	i.FromKey = path.Join("index", i.IndexName, t.Format(time.RFC3339))
+	i.FromKey = path.Join("index", i.IndexName, t.UTC().Format(time.RFC3339))
 }
 
 func (i *Index) ToTime(t time.Time) {
-	i.ToKey = path.Join("index", i.IndexName, t.Format(time.RFC3339))
+	i.ToKey = path.Join("index", i.IndexName, t.UTC().Format(time.RFC3339))
 }
 
 func (i *Index) Scan(ctx context.Context, client *storage.Client, limit int64, fn func(attr *storage.ObjectAttrs) error) error {

@@ -882,6 +882,11 @@ func Xgetgrnam(t *TLS, name uintptr) uintptr {
 	return 0
 }
 
+// int getgrnam_r(const char *name, struct group *grp, char *buf, size_t buflen, struct group **result);
+func Xgetgrnam_r(t *TLS, name, grp, buf uintptr, buflen types.Size_t, result uintptr) int32 {
+	panic(todo(""))
+}
+
 func closeGroup(p *grp.Group) {
 	Xfree(nil, p.Fgr_name)
 	Xfree(nil, p.Fgr_passwd)
@@ -955,6 +960,11 @@ func Xgetgrgid(t *TLS, gid uint32) uintptr {
 	}
 
 	return 0
+}
+
+// int getgrgid_r(gid_t gid, struct group *grp, char *buf, size_t buflen, struct group **result);
+func Xgetgrgid_r(t *TLS, gid uint32, grp, buf uintptr, buflen types.Size_t, result uintptr) int32 {
+	panic(todo(""))
 }
 
 // int mkstemps(char *template, int suffixlen);

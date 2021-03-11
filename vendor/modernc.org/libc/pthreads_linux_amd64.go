@@ -11,6 +11,7 @@ import (
 
 	"modernc.org/libc/errno"
 	"modernc.org/libc/pthread"
+	"modernc.org/libc/sys/types"
 )
 
 var (
@@ -190,5 +191,70 @@ func Xpthread_self(t *TLS) pthread.Pthread_t {
 
 // int pthread_equal(pthread_t t1, pthread_t t2);
 func Xpthread_equal(t *TLS, t1, t2 pthread.Pthread_t) int32 {
+	panic(todo(""))
+}
+
+// int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void));
+func Xpthread_atfork(t *TLS, prepare, parent, child uintptr) int32 {
+	panic(todo(""))
+}
+
+// int pthread_join(pthread_t thread, void **value_ptr);
+func Xpthread_join(t *TLS, thread pthread.Pthread_t, value_ptr uintptr) int32 {
+	panic(todo(""))
+}
+
+// int pthread_cond_timedwait(pthread_cond_t *restrict cond, pthread_mutex_t *restrict mutex, const struct timespec *restrict abstime);
+func Xpthread_cond_timedwait(t *TLS, cond, mutex, abstime uintptr) int32 {
+	panic(todo(""))
+}
+
+// int pthread_attr_init(pthread_attr_t *attr);
+func Xpthread_attr_init(t *TLS, attr uintptr) int32 {
+	panic(todo(""))
+}
+
+// int pthread_attr_setscope(pthread_attr_t *attr, int contentionscope);
+func Xpthread_attr_setscope(t *TLS, attr uintptr, contentionscope int32) int32 {
+	panic(todo(""))
+}
+
+// int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize);
+func Xpthread_attr_setstacksize(t *TLS, attr uintptr, stacksize types.Size_t) int32 {
+	panic(todo(""))
+}
+
+// int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate);
+func Xpthread_attr_setdetachstate(t *TLS, attr uintptr, detachstate int32) int32 {
+	panic(todo(""))
+}
+
+// int pthread_attr_destroy(pthread_attr_t *attr);
+func Xpthread_attr_destroy(t *TLS, attr uintptr) int32 {
+	panic(todo(""))
+}
+
+// void pthread_exit(void *value_ptr);
+func Xpthread_exit(t *TLS, value_ptr uintptr) {
+	panic(todo(""))
+}
+
+// int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
+func Xpthread_key_create(t *TLS, key, destructor uintptr) int32 {
+	panic(todo(""))
+}
+
+// int pthread_key_delete(pthread_key_t key);
+func Xpthread_key_delete(t *TLS, key pthread.Pthread_key_t) int32 {
+	panic(todo(""))
+}
+
+// int pthread_setspecific(pthread_key_t key, const void *value);
+func Xpthread_setspecific(t *TLS, key pthread.Pthread_key_t, value uintptr) int32 {
+	panic(todo(""))
+}
+
+// void *pthread_getspecific(pthread_key_t key);
+func Xpthread_getspecific(t *TLS, key pthread.Pthread_key_t) uintptr {
 	panic(todo(""))
 }

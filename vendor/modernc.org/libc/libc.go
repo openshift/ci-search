@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -34,6 +35,11 @@ import (
 	"modernc.org/libc/time"
 	"modernc.org/libc/unistd"
 	"modernc.org/mathutil"
+)
+
+type (
+	// RawMem64 represents the biggest uint64 array the runtime can handle.
+	RawMem64 [unsafe.Sizeof(RawMem{}) / unsafe.Sizeof(uint64(0))]uint64
 )
 
 var (
@@ -391,6 +397,9 @@ func Xqsort(t *TLS, base uintptr, nmemb, size types.Size_t, compar uintptr) {
 // void __assert_fail(const char * assertion, const char * file, unsigned int line, const char * function);
 func X__assert_fail(t *TLS, assertion, file uintptr, line uint32, function uintptr) {
 	fmt.Fprintf(os.Stderr, "assertion failure: %s:%d.%s: %s\n", GoString(file), line, GoString(function), GoString(assertion))
+	if memgrind {
+		fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
+	}
 	os.Stderr.Sync()
 	Xexit(t, 1)
 }
@@ -512,9 +521,12 @@ func Xabs(t *TLS, j int32) int32 {
 
 func X__builtin_isnan(t *TLS, x float64) int32    { return Bool32(math.IsNaN(x)) }
 func Xacos(t *TLS, x float64) float64             { return math.Acos(x) }
+func Xacosh(t *TLS, x float64) float64            { return math.Acosh(x) }
 func Xasin(t *TLS, x float64) float64             { return math.Asin(x) }
+func Xasinh(t *TLS, x float64) float64            { return math.Asinh(x) }
 func Xatan(t *TLS, x float64) float64             { return math.Atan(x) }
 func Xatan2(t *TLS, x, y float64) float64         { return math.Atan2(x, y) }
+func Xatanh(t *TLS, x float64) float64            { return math.Atanh(x) }
 func Xceil(t *TLS, x float64) float64             { return math.Ceil(x) }
 func Xceilf(t *TLS, x float32) float32            { return float32(math.Ceil(float64(x))) }
 func Xcopysign(t *TLS, x, y float64) float64      { return math.Copysign(x, y) }
@@ -541,6 +553,7 @@ func Xsinh(t *TLS, x float64) float64             { return math.Sinh(x) }
 func Xsqrt(t *TLS, x float64) float64             { return math.Sqrt(x) }
 func Xtan(t *TLS, x float64) float64              { return math.Tan(x) }
 func Xtanh(t *TLS, x float64) float64             { return math.Tanh(x) }
+func Xtrunc(t *TLS, x float64) float64            { return math.Trunc(x) }
 
 var nextRand = uint64(1)
 

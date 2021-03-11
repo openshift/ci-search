@@ -4,6 +4,7 @@
 
 .PHONY:	all bench clean cover cpu editor internalError later mem nuke todo edit devbench \
 	darwin_amd64 \
+	darwin_arm64 \
 	linux_386 \
 	linux_amd64 \
 	linux_arm \
@@ -23,6 +24,7 @@ all:
 	go test -i
 	go test 2>&1 -timeout 1h | tee -a $(log)
 	GOOS=darwin GOARCH=amd64 go build
+	GOOS=darwin GOARCH=arm64 go build
 	GOOS=linux GOARCH=386 go build
 	GOOS=linux GOARCH=amd64 go build
 	GOOS=linux GOARCH=arm go build
@@ -42,6 +44,10 @@ all:
 darwin_amd64:
 	TARGET_GOOS=darwin TARGET_GOARCH=amd64 go generate
 	GOOS=darwin GOARCH=amd64 go build -v ./...
+
+darwin_arm64:
+	TARGET_GOOS=darwin TARGET_GOARCH=arm64 go generate
+	GOOS=darwin GOARCH=arm64 go build -v ./...
 
 linux_amd64:
 	TARGET_GOOS=linux TARGET_GOARCH=amd64 go generate
@@ -72,13 +78,13 @@ all_targets: linux_amd64 linux_386 linux_arm linux_arm64 windows_amd64 windows_3
 
 build_all_targets:
 	GOOS=darwin GOARCH=amd64 go build -v ./...
+	GOOS=darwin GOARCH=arm64 go build -v ./...
 	GOOS=linux GOARCH=386 go build -v ./...
 	GOOS=linux GOARCH=amd64 go build -v ./...
 	GOOS=linux GOARCH=arm go build -v ./...
 	GOOS=linux GOARCH=arm64 go build -v ./...
 	GOOS=windows GOARCH=386 go build -v ./...
 	GOOS=windows GOARCH=amd64 go build -v ./...
-
 	echo done
 
 devbench:
@@ -130,4 +136,3 @@ todo:
 	@grep -nr $(grep) BUG * | grep -v $(ngrep) || true
 	@grep -nr $(grep) [^[:alpha:]]println * | grep -v $(ngrep) || true
 	@grep -nir $(grep) 'work.*progress' || true
-
