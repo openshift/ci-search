@@ -121,7 +121,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
   <head>
     <title>OpenShift CI Search</title>
     <meta charset="UTF-8">
-    <meta name="description" content="{{.index.Job}} failure rates: {{with $dot := .}}{{range $index, $element := $dot.index.Search}}{{if $index}}, {{end}}{{index $dot.counts $element}} {{$element}}{{end}}{{end}}" />
+    <meta name="description" content="{{.index.IncludeName}} failure rates: {{with $dot := .}}{{range $index, $element := $dot.index.Search}}{{if $index}}, {{end}}{{index $dot.counts $element}} {{$element}}{{end}}{{end}}" />
     <meta property="og:image" content="{{.openGraphImage}}" />
     <style type="text/css">
       html, body {
@@ -170,7 +170,7 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       var xAxis = d3.axisBottom(xScale);
       var yAxis = d3.axisLeft(yScale);
 
-      var filter = '{{.index.Job}}';
+      var filter = '{{.index.IncludeName}}';
       var dateRange = {{.index.MaxAge.Seconds}};  // in seconds
       var searchType = '{{.index.SearchType}}';
 
@@ -435,7 +435,6 @@ var htmlChart = template.Must(template.New("chart").Funcs(map[string]interface{}
       function refetch(interval) {
         // Currently: Reason: CORS header ‘Access-Control-Allow-Origin’ missing
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS/Errors/CORSMissingAllowOrigin
-        //d3.json('https://prow.ci.openshift.org/prowjobs.js')
         d3.json('jobs')
           .then(data => {
             var now = new Date()
