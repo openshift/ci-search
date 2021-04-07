@@ -160,6 +160,10 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*BugComments, error) {
 	return bugs, nil
 }
 
+func (s *CommentDiskStore) DeleteBug(bug *Bug) error {
+	_, path := s.pathForBug(bug)
+	return os.Remove(path)
+}
 func (s *CommentDiskStore) pathForBug(bug *Bug) (string, string) {
 	return filepath.Join(s.base, fmt.Sprintf("z-bug-%d", bug.Info.ID)),
 		filepath.Join(s.base, fmt.Sprintf("bug-%d", bug.Info.ID))

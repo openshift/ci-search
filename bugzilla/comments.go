@@ -17,6 +17,7 @@ import (
 
 type CommentStore struct {
 	store          cache.Store
+	persistedStore PersistentCommentStore
 	hasSynced      []cache.InformerSynced
 	client         *Client
 	includePrivate bool
@@ -34,12 +35,14 @@ type CommentStore struct {
 type PersistentCommentStore interface {
 	Sync(keys []string) ([]*BugComments, error)
 	NotifyChanged(id int)
+	DeleteBug(*Bug) error
 }
 
-func NewCommentStore(client *Client, refreshInterval time.Duration, includePrivate bool) *CommentStore {
+func NewCommentStore(client *Client, refreshInterval time.Duration, includePrivate bool, persisted PersistentCommentStore) *CommentStore {
 	s := &CommentStore{
-		store:  cache.NewStore(cache.MetaNamespaceKeyFunc),
-		client: client,
+		store:          cache.NewStore(cache.MetaNamespaceKeyFunc),
+		persistedStore: persisted,
+		client:         client,
 
 		includePrivate: includePrivate,
 
@@ -70,14 +73,14 @@ func (s *CommentStore) Get(id int) (*BugComments, bool) {
 	return item.(*BugComments), true
 }
 
-func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, persisted PersistentCommentStore) error {
+func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer) error {
 	defer klog.V(2).Infof("Comment worker exited")
 	if s.refreshInterval == 0 {
 		return nil
 	}
-	if persisted != nil {
+	if s.persistedStore != nil {
 		// load the full state into the store
-		list, err := persisted.Sync(nil)
+		list, err := s.persistedStore.Sync(nil)
 		if err != nil {
 			klog.Errorf("Unable to load initial comment state: %v", err)
 		}
@@ -101,7 +104,7 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, p
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    s.bugAdd,
 		DeleteFunc: s.bugDelete,
-		UpdateFunc: func(_, new interface{}) { s.bugUpdate(new, persisted) },
+		UpdateFunc: func(_, new interface{}) { s.bugUpdate(new) },
 	})
 
 	klog.V(5).Infof("Running comment store")
@@ -123,7 +126,7 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, p
 	}, s.refreshInterval/4)
 
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
-		if err := s.run(ctx, persisted); err != nil {
+		if err := s.run(ctx); err != nil {
 			klog.Errorf("Error syncing comments: %v", err)
 		}
 	}, time.Second)
@@ -131,7 +134,7 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer, p
 	return ctx.Err()
 }
 
-func (s *CommentStore) run(ctx context.Context, persisted PersistentCommentStore) error {
+func (s *CommentStore) run(ctx context.Context) error {
 	done := ctx.Done()
 	for {
 		l := s.queue.Len()
@@ -161,7 +164,7 @@ func (s *CommentStore) run(ctx context.Context, persisted PersistentCommentStore
 			s.queue.Done(k)
 			id, err := strconv.Atoi(k.(string))
 			if err != nil {
-				klog.Warningf("comment id was not parsable to int: %v", err)
+				klog.Warningf("comment id %q was not parsable to int: %v", k.(string), err)
 				continue
 			}
 			bugIDs = append(bugIDs, id)
@@ -176,7 +179,7 @@ func (s *CommentStore) run(ctx context.Context, persisted PersistentCommentStore
 			continue
 		}
 		s.filterComments(bugComments)
-		s.mergeBugs(bugComments, now, persisted)
+		s.mergeBugs(bugComments, now)
 	}
 }
 
@@ -211,7 +214,7 @@ func (s *CommentStore) filterComments(bugComments *BugCommentsList) {
 	}
 }
 
-func (s *CommentStore) mergeBugs(bugComments *BugCommentsList, now time.Time, persisted PersistentCommentStore) {
+func (s *CommentStore) mergeBugs(bugComments *BugCommentsList, now time.Time) {
 	var total int
 	defer func() { klog.V(7).Infof("Updated %d comment records", total) }()
 	s.lock.Lock()
@@ -233,8 +236,8 @@ func (s *CommentStore) mergeBugs(bugComments *BugCommentsList, now time.Time, pe
 		updated.Info = existing.Info
 		updated.RefreshTime = now
 		s.store.Update(updated)
-		if persisted != nil {
-			persisted.NotifyChanged(int(id))
+		if s.persistedStore != nil {
+			s.persistedStore.NotifyChanged(int(id))
 		}
 		total++
 	}
@@ -270,7 +273,7 @@ func (s *CommentStore) bugAdd(obj interface{}) {
 	s.queue.Add(bug.Name)
 }
 
-func (s *CommentStore) bugUpdate(obj interface{}, persisted PersistentCommentStore) {
+func (s *CommentStore) bugUpdate(obj interface{}) {
 	bug, ok := obj.(*Bug)
 	if !ok {
 		return
@@ -291,25 +294,38 @@ func (s *CommentStore) bugUpdate(obj interface{}, persisted PersistentCommentSto
 		klog.Errorf("Unable to update bug from informer: %v", err)
 		return
 	}
-	if persisted != nil {
-		persisted.NotifyChanged(bug.Info.ID)
+	if s.persistedStore != nil {
+		s.persistedStore.NotifyChanged(bug.Info.ID)
 	}
 }
 
 func (s *CommentStore) bugDelete(obj interface{}) {
 	var name string
+	var id int
+	var err error
 	switch t := obj.(type) {
 	case cache.DeletedFinalStateUnknown:
 		name = t.Key
+		id, err = strconv.Atoi(t.Key)
+		if err != nil {
+			klog.Errorf("Unable to convert string %q to int: %v", t.Key, err)
+			return
+		}
 	case *Bug:
 		name = t.Name
+		id = t.Info.ID
 	default:
 		return
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if err := s.store.Delete(&Bug{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
+	bug := &Bug{ObjectMeta: metav1.ObjectMeta{Name: name}, Info: BugInfo{ID: id}}
+	if err := s.store.Delete(bug); err != nil {
 		klog.Errorf("Unable to delete bug from informer: %v", err)
+		return
+	}
+	if err := s.persistedStore.DeleteBug(bug); err != nil {
+		klog.Errorf("Unable to delete bug from disk store: %v", err)
 		return
 	}
 	s.queue.Add(name)
