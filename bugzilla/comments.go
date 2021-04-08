@@ -36,6 +36,7 @@ type PersistentCommentStore interface {
 	Sync(keys []string) ([]*BugComments, error)
 	NotifyChanged(id int)
 	DeleteBug(*Bug) error
+	CloseBug(*BugComments) error
 }
 
 func NewCommentStore(client *Client, refreshInterval time.Duration, includePrivate bool, persisted PersistentCommentStore) *CommentStore {
@@ -301,31 +302,39 @@ func (s *CommentStore) bugUpdate(obj interface{}) {
 
 func (s *CommentStore) bugDelete(obj interface{}) {
 	var name string
-	var id int
 	var err error
 	switch t := obj.(type) {
 	case cache.DeletedFinalStateUnknown:
 		name = t.Key
-		id, err = strconv.Atoi(t.Key)
-		if err != nil {
-			klog.Errorf("Unable to convert string %q to int: %v", t.Key, err)
-			return
-		}
 	case *Bug:
 		name = t.Name
-		id = t.Info.ID
 	default:
 		return
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	bug := &Bug{ObjectMeta: metav1.ObjectMeta{Name: name}, Info: BugInfo{ID: id}}
+
+	obj, ok, err := s.store.GetByKey(name)
+	if err != nil {
+		klog.Errorf("Unexpected error retrieving %q from store: %v", name, err)
+		return
+	}
+	if !ok {
+		klog.Errorf("Bug %q not found in store", name)
+		return
+	}
+
+	bug, ok := obj.(*BugComments)
+	if !ok {
+		klog.Errorf("Key %q did not reference object of type BugComments: %#v", name, obj)
+		return
+	}
 	if err := s.store.Delete(bug); err != nil {
 		klog.Errorf("Unable to delete bug from informer: %v", err)
 		return
 	}
-	if err := s.persistedStore.DeleteBug(bug); err != nil {
-		klog.Errorf("Unable to delete bug from disk store: %v", err)
+	if err := s.persistedStore.CloseBug(bug); err != nil {
+		klog.Errorf("Unable to close bug in disk store: %v", err)
 		return
 	}
 	s.queue.Add(name)
