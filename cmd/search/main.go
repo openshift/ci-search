@@ -394,21 +394,21 @@ func (o *options) Run() error {
 			},
 		)
 		lister := bugzilla.NewBugLister(informer.GetIndexer())
-		store := bugzilla.NewCommentStore(c, 15*time.Minute, false)
 		if err := os.MkdirAll(o.bugsPath, 0777); err != nil {
 			return fmt.Errorf("unable to create directory for artifact: %v", err)
 		}
 		diskStore := bugzilla.NewCommentDiskStore(o.bugsPath, o.MaxAge)
+		store := bugzilla.NewCommentStore(c, 2*time.Minute, false, diskStore)
 
 		o.bugs = store
 
 		ctx := context.Background()
 		go informer.Run(ctx.Done())
-		go store.Run(ctx, informer, diskStore)
+		go store.Run(ctx, informer)
 		go diskStore.Run(ctx, lister, store, o.NoIndex)
 		klog.Infof("Started indexing bugzilla %s with query %q", o.BugzillaURL, o.BugzillaSearch)
 	} else {
-		o.bugs = bugzilla.NewCommentStore(nil, 0, false)
+		o.bugs = bugzilla.NewCommentStore(nil, 0, false, nil)
 	}
 
 	if len(o.DeckURI) > 0 {

@@ -137,7 +137,7 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*BugComments, error) {
 			return nil
 		}
 
-		comments, err := readBugComments(path, info.Size())
+		comments, err := readBugComments(path)
 		if err != nil {
 			return fmt.Errorf("unable to read %q: %v", path, err)
 		}
@@ -160,6 +160,20 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*BugComments, error) {
 	return bugs, nil
 }
 
+func (s *CommentDiskStore) DeleteBug(bug *Bug) error {
+	_, path := s.pathForBug(bug)
+	return os.Remove(path)
+}
+
+func (s *CommentDiskStore) CloseBug(bug *BugComments) error {
+
+	clone := bug.DeepCopyObject().(*BugComments)
+	clone.Info.Status = "CLOSED"
+	if err := s.write(&Bug{ObjectMeta: clone.ObjectMeta, Info: clone.Info}, clone); err != nil {
+		return fmt.Errorf("could not mark bug %s closed due to write error: %v", clone.Info.ID, err)
+	}
+	return nil
+}
 func (s *CommentDiskStore) pathForBug(bug *Bug) (string, string) {
 	return filepath.Join(s.base, fmt.Sprintf("z-bug-%d", bug.Info.ID)),
 		filepath.Join(s.base, fmt.Sprintf("bug-%d", bug.Info.ID))
@@ -249,7 +263,7 @@ const (
 	bugCommentDelimiter = "\x1e"
 )
 
-func readBugComments(path string, estimatedSize int64) (*BugComments, error) {
+func readBugComments(path string) (*BugComments, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
