@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/openshift/ci-search/pkg/httpwriter"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
@@ -47,7 +48,7 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writer := encodedWriter(w, req)
+	writer := httpwriter.ForRequest(w, req)
 	defer writer.Close()
 
 	if _, err = writer.Write(data); err != nil {
@@ -107,7 +108,7 @@ func (o *options) handleSearchV2(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writer := encodedWriter(w, req)
+	writer := httpwriter.ForRequest(w, req)
 	defer writer.Close()
 
 	if _, err = writer.Write(data); err != nil {

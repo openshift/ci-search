@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/go-bindata/go-bindata"
+
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,6 +34,8 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/metricdb"
+	"github.com/openshift/ci-search/metricdb/httpgraph"
 	"github.com/openshift/ci-search/pkg/bindata"
 	"github.com/openshift/ci-search/pkg/proc"
 	"github.com/openshift/ci-search/prow"
@@ -52,6 +56,7 @@ func main() {
 		JobURIPrefix:      "https://prow.ci.openshift.org/view/gs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
 		IndexBucket:       "origin-ci-test",
+		MetricDBPath:      "search.db",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -75,6 +80,8 @@ func main() {
 	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
 	flag.StringVar(&opt.IndexBucket, "index-bucket", opt.IndexBucket, "A GCS bucket to look for job indices in.")
+	flag.StringVar(&opt.MetricDBPath, "metric-db", opt.MetricDBPath, "Path where metrics should be recorded as a SQLite database. If empty, no metrics will be stored.")
+	flag.DurationVar(&opt.MetricMaxAge, "metric-max-age", opt.MetricMaxAge, "The maximum age to retain metrics. If negative, metrics are retained forever. If zero, no metrics are gathered.")
 
 	flag.StringVar(&opt.BugzillaURL, "bugzilla-url", opt.BugzillaURL, "The URL of a bugzilla server to index bugs from.")
 	flag.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
@@ -102,6 +109,9 @@ type options struct {
 	DeckURI           string
 	IndexBucket       string
 
+	MetricDBPath string
+	MetricMaxAge time.Duration
+
 	BugzillaURL       string
 	BugzillaSearch    string
 	BugzillaTokenPath string
@@ -118,6 +128,8 @@ type options struct {
 	bugs         *bugzilla.CommentStore
 	bugsPath     string
 	bugURIPrefix *url.URL
+
+	metrics *metricdb.DB
 }
 
 type IndexStats struct {
@@ -465,6 +477,18 @@ func (o *options) Run() error {
 		o.jobAccessor = prow.Empty
 	}
 
+	o.metrics, err = metricdb.New(o.MetricDBPath, url.URL{}, o.MetricMaxAge)
+	if err != nil {
+		return err
+	}
+	g := &httpgraph.Server{DB: o.metrics}
+
+	go wait.Forever(func() {
+		if err := o.metrics.Run(); err != nil {
+			klog.Fatalf("Unable to read metrics: %v", err)
+		}
+	}, 3*time.Minute)
+
 	go wait.Forever(func() {
 		if err := indexedPaths.Load(); err != nil {
 			klog.Fatalf("Unable to index: %v", err)
@@ -497,6 +521,8 @@ func (o *options) Run() error {
 		}
 
 		mux.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(bindata.AssetFile())))
+		handle("/graph/metrics", http.HandlerFunc(g.HandleGraph))
+		handle("/graph/api/metrics/job", http.HandlerFunc(g.HandleAPIJobGraph))
 		handle("/chart", http.HandlerFunc(o.handleChart))
 		handle("/chart.png", http.HandlerFunc(o.handleChartPNG))
 		handle("/config", http.HandlerFunc(o.handleConfig))

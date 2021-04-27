@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/openshift/ci-search/pkg/httpwriter"
 	"github.com/openshift/ci-search/prow"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog"
@@ -51,7 +52,7 @@ func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writer := encodedWriter(w, req)
+	writer := httpwriter.ForRequest(w, req)
 	defer writer.Close()
 	if _, err := writer.Write(data); err != nil {
 		klog.Errorf("Failed to write response: %v", err)

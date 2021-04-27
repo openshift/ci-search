@@ -15,6 +15,14 @@
 //
 // Changelog
 //
+// 2021-03-14 v1.10.0:
+//
+// Update to use sqlite 3.35.0, release notes at https://www.sqlite.org/releaselog/3_35_0.html.
+//
+// 2021-03-11 v1.9.0:
+//
+// Support darwin/arm64.
+//
 // 2021-01-08 v1.8.0:
 //
 // Support darwin/amd64.
@@ -106,6 +114,7 @@
 // These combinations of GOOS and GOARCH are currently supported
 //
 // 	darwin	amd64
+// 	darwin	arm64
 // 	linux	386
 // 	linux	amd64
 // 	linux	arm

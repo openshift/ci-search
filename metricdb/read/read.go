@@ -52,10 +52,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	jobCompletion := make(map[string]metricdb.Int64Range)
-	rows, err = db.Query("SELECT job_name, min(timestamp), max(timestamp) FROM metric_value, metric WHERE metric_id = metric.id AND metric.name == 'job:duration:total:seconds' GROUP BY job_name")
+	jobIds := make(map[string]int64)
+	rows, err = db.Query("SELECT id, name FROM job")
 	if err != nil {
 		log.Fatal(err)
+	}
+	for rows.Next() {
+		if err := rows.Scan(&id, &name); err != nil {
+			log.Fatal(err)
+		}
+		jobIds[name] = id
+	}
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	jobCompletion := make(map[string]metricdb.Int64Range)
+	rows, err = db.Query("SELECT job.name, min(timestamp), max(timestamp) FROM job, metric_value, metric WHERE job.id = metric_value.job_id AND metric_id = metric.id AND metric.name == 'job:duration:total:seconds' GROUP BY job.name")
+	if err != nil {
+		log.Fatalf("completion query: %v", err)
 	}
 	var jobName string
 	var min, max int64
@@ -69,17 +84,22 @@ func main() {
 		log.Fatal(err)
 	}
 
+	insertJob, err := db.Preparex("INSERT INTO job (name) VALUES(?)")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	insertMetric, err := db.Preparex("INSERT INTO metric (name) VALUES(?)")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	insertMetricValue, err := db.Preparex("INSERT INTO metric_value (job_name, job_id, metric_id, metric_selector, timestamp, value) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+	insertMetricValue, err := db.Preparex("INSERT INTO metric_value (job_id, job_number, metric_id, metric_selector, timestamp, value) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	insertReleaseJob, err := db.Preparex("INSERT INTO release_job (version, job_name, job_id, type) VALUES(?, ?, ?, ?) ON CONFLICT DO NOTHING")
+	insertReleaseJob, err := db.Preparex("INSERT INTO release_job (major, minor, micro, timestamp, stream, pre, version, job_id, job_number, type) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -92,6 +112,7 @@ func main() {
 	statusURL, _ := url.Parse("https://prow.svc.ci.openshift.org")
 
 	var tx *sqlx.Tx
+	var txInsertJob *sqlx.Stmt
 	var txInsertMetric *sqlx.Stmt
 	var txInsertMetricValue *sqlx.Stmt
 	var txInsertReleaseJob *sqlx.Stmt
@@ -110,7 +131,7 @@ func main() {
 			return fmt.Errorf("failed to read %s: %v", attr.Name, err)
 		}
 
-		jobName, jobID := partialJob.Spec.Job, partialJob.Status.BuildID
+		jobName, jobNumber := partialJob.Spec.Job, partialJob.Status.BuildID
 		jobRange := jobCompletion[jobName]
 
 		// use the completed string as a way to avoid reprocessing an already stored value when scanning
@@ -140,6 +161,36 @@ func main() {
 			delete(versionsByType, k)
 		}
 
+		jobID, ok := jobIds[jobName]
+		if !ok {
+			if tx == nil {
+				tx, err = db.Beginx()
+				if err != nil {
+					log.Fatal(err)
+				}
+				batchSize = 0
+				txInsertJob = nil
+				txInsertMetric = nil
+				txInsertMetricValue = nil
+				txInsertReleaseJob = nil
+			}
+
+			if txInsertJob == nil {
+				txInsertJob = tx.Stmtx(insertJob)
+			}
+			r, err := txInsertJob.Exec(jobName)
+			if err != nil {
+				log.Fatalf("insert job: %v", err)
+			}
+			batchSize++
+			jobID, err = r.LastInsertId()
+			if err != nil {
+				log.Fatalf("insert job: %v", err)
+			}
+			log.Printf("assigned job %s id %d", jobName, jobID)
+			jobIds[jobName] = jobID
+		}
+
 		for k, v := range metrics {
 			name, selector := metricdb.SplitMetricKey(k)
 			if len(name) == 0 {
@@ -147,7 +198,7 @@ func main() {
 			}
 			selector, ok := metricdb.CheckMetricSelector(selector)
 			if !ok {
-				log.Printf("warning: Invalid selector %q in %s/%s", k, jobName, jobID)
+				log.Printf("warning: Invalid selector %q in %s/%s", k, jobName, jobNumber)
 				continue
 			}
 
@@ -157,6 +208,7 @@ func main() {
 					log.Fatal(err)
 				}
 				batchSize = 0
+				txInsertJob = nil
 				txInsertMetric = nil
 				txInsertMetricValue = nil
 				txInsertReleaseJob = nil
@@ -183,9 +235,9 @@ func main() {
 			if txInsertMetricValue == nil {
 				txInsertMetricValue = tx.Stmtx(insertMetricValue)
 			}
-			_, err := txInsertMetricValue.Exec(jobName, jobID, id, selector, v.Timestamp, v.Value)
+			_, err := txInsertMetricValue.Exec(jobID, jobNumber, id, selector, v.Timestamp, v.Value)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalf("insert metric_value: %v", err)
 			}
 			insertedJobMetrics++
 			batchSize++
@@ -222,9 +274,18 @@ func main() {
 				txInsertReleaseJob = tx.Stmtx(insertReleaseJob)
 			}
 			for version, versionType := range versionsByType {
-				_, err := txInsertReleaseJob.Exec(version, jobName, jobID, versionType)
+				major, minor, micro, stream, t, pre, ok := metricdb.VersionParts(version)
+				if !ok {
+					log.Printf("warning: %s is not a well formed version label", version)
+				}
+				var unix int64
+				if !t.IsZero() {
+					unix = t.Unix()
+				}
+
+				_, err := txInsertReleaseJob.Exec(major, minor, micro, unix, stream, pre, version, jobID, jobNumber, versionType)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatalf("insert release job: %v", err)
 				}
 				batchSize++
 			}
@@ -235,7 +296,7 @@ func main() {
 		if tx != nil && batchSize >= 1000 {
 			log.Printf("Committing batch at %d jobs %d metrics", insertedJobs, insertedJobMetrics)
 			if err := tx.Commit(); err != nil {
-				log.Fatal(err)
+				log.Fatalf("committing batch: %v", err)
 			}
 			tx = nil
 		}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/openshift/ci-search/pkg/httpwriter"
 	"k8s.io/klog"
 )
 
@@ -83,7 +84,7 @@ func (o *options) handleChart(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	writer := encodedWriter(w, req)
+	writer := httpwriter.ForRequest(w, req)
 	defer writer.Close()
 
 	// The Open Graph image needs an absolute URI, so try to figure that out.

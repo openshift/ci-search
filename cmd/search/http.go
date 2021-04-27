@@ -23,6 +23,8 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/metricdb/httpgraph"
+	"github.com/openshift/ci-search/pkg/httpwriter"
 )
 
 type nopFlusher struct{}
@@ -59,7 +61,7 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	writer := encodedWriter(w, req)
+	writer := httpwriter.ForRequest(w, req)
 	defer writer.Close()
 	if _, err = writer.Write(data); err != nil {
 		klog.Errorf("Failed to write response: %v", err)
@@ -150,9 +152,9 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		maxAgeOptions = append(maxAgeOptions, fmt.Sprintf(`<option value="%s" selected>%s</option>`, maxAge, maxAge))
 	}
 
-	writer := encodedWriter(w, req)
-	defer writer.Close()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer := httpwriter.ForRequest(w, req)
+	defer writer.Close()
 
 	var wrapValue string
 	nowrapClass := "nowrap"
@@ -183,30 +185,38 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs)
 		flusher.Flush()
 
-		buf := make([]byte, 0, 16384)
-		buf = append(buf, []byte("<script>let data = [\n[")...)
-		for i, bucket := range stats.Buckets {
-			if i > 0 {
-				buf = append(buf, ',')
-			}
-			buf = strconv.AppendInt(buf, bucket.T, 10)
-		}
-		buf = append(buf, []byte("],\n[")...)
-		for i, bucket := range stats.Buckets {
-			if i > 0 {
-				buf = append(buf, ',')
-			}
-			buf = strconv.AppendInt(buf, int64(bucket.Jobs), 10)
-		}
-		buf = append(buf, []byte("],\n[")...)
-		for i, bucket := range stats.Buckets {
-			if i > 0 {
-				buf = append(buf, ',')
-			}
-			buf = strconv.AppendInt(buf, int64(bucket.FailedJobs), 10)
-		}
-		buf = append(buf, []byte("]\n]</script>")...)
-		writer.Write(buf)
+		gw := &httpgraph.GraphDataWriter{}
+		writer.Write(gw.
+			Var("data").
+			Series("", func(buf []byte) []byte {
+				for i, bucket := range stats.Buckets {
+					if i > 0 {
+						buf = append(buf, ',')
+					}
+					buf = strconv.AppendInt(buf, bucket.T, 10)
+				}
+				return buf
+			}).
+			Series("", func(buf []byte) []byte {
+				for i, bucket := range stats.Buckets {
+					if i > 0 {
+						buf = append(buf, ',')
+					}
+					buf = strconv.AppendInt(buf, int64(bucket.Jobs), 10)
+				}
+				return buf
+			}).
+			Series("", func(buf []byte) []byte {
+				for i, bucket := range stats.Buckets {
+					if i > 0 {
+						buf = append(buf, ',')
+					}
+					buf = strconv.AppendInt(buf, int64(bucket.FailedJobs), 10)
+				}
+				return buf
+			}).
+			Done(""),
+		)
 		fmt.Fprintf(writer, htmlEmptyPageGraph)
 		fmt.Fprintf(writer, htmlPageEnd)
 		return
