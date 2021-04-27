@@ -3,7 +3,6 @@ package httpgraph
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -83,6 +82,11 @@ func (s APIGraphSeriesValuesNullableFromFloat64) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Server) HandleAPIJobGraph(w http.ResponseWriter, req *http.Request) {
+	if s.DB == nil {
+		http.Error(w, "Metrics graphing is disabled", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var graph Graph
 	var success bool
 	start := time.Now()
@@ -91,9 +95,10 @@ func (s *Server) HandleAPIJobGraph(w http.ResponseWriter, req *http.Request) {
 		klog.Infof("Render API graph %s query=%s render=%s duration=%s success=%t", graph.String(), queryDuration.Truncate(time.Millisecond/10), renderDuration.Truncate(time.Millisecond/10), time.Now().Sub(start).Truncate(time.Millisecond), success)
 	}()
 
-	db, err := sqlx.Open("sqlite", "file:search.db")
+	db, err := s.DB.NewReadConnection()
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, fmt.Sprintf("Unable to connect to database: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	queryStart := time.Now()

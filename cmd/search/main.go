@@ -56,7 +56,6 @@ func main() {
 		JobURIPrefix:      "https://prow.ci.openshift.org/view/gs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
 		IndexBucket:       "origin-ci-test",
-		MetricDBPath:      "search.db",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -477,17 +476,19 @@ func (o *options) Run() error {
 		o.jobAccessor = prow.Empty
 	}
 
-	o.metrics, err = metricdb.New(o.MetricDBPath, url.URL{}, o.MetricMaxAge)
-	if err != nil {
-		return err
+	// enable metrics
+	if len(o.MetricDBPath) > 0 {
+		o.metrics, err = metricdb.New(o.MetricDBPath, url.URL{}, o.MetricMaxAge)
+		if err != nil {
+			return err
+		}
+		go wait.Forever(func() {
+			if err := o.metrics.Run(); err != nil {
+				klog.Fatalf("Unable to read metrics: %v", err)
+			}
+		}, 3*time.Minute)
 	}
 	g := &httpgraph.Server{DB: o.metrics}
-
-	go wait.Forever(func() {
-		if err := o.metrics.Run(); err != nil {
-			klog.Fatalf("Unable to read metrics: %v", err)
-		}
-	}, 3*time.Minute)
 
 	go wait.Forever(func() {
 		if err := indexedPaths.Load(); err != nil {
