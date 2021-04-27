@@ -169,6 +169,10 @@ const htmlPageStart = `<!DOCTYPE html>
 }
 .input-group-lg > .multiselect-native-select > div.btn-group > .custom-select {
 	font-size: 1.25rem;
+	height: calc(1.5em + 1rem + 2px);
+	line-height: 1.5;
+	padding-top: 8px;
+	padding-bottom: 8px;
 }
 .u-legend {
 	//position: absolute;

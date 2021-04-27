@@ -268,7 +268,10 @@ func (d *DB) indexFromGCS(start time.Time) error {
 	if err := index.EachJob(context.TODO(), gcsClient, 0, d.statusURL, func(partialJob prow.Job, attr *storage.ObjectAttrs) error {
 		keysScanned++
 		if keysScanned%1000 == 0 {
-			klog.Infof("DEBUG: Scanned %d job-metrics keys", keysScanned)
+			klog.Infof("Scanned %d job-metrics keys", keysScanned)
+			d.refreshJobCounts()
+			d.refreshJobIdentifiers()
+			d.refreshMetricIdentifiers()
 		}
 
 		jobName, jobNumberString := partialJob.Spec.Job, partialJob.Status.BuildID
