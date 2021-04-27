@@ -31,7 +31,7 @@ type DB struct {
 }
 
 func New(path string, statusURL url.URL, maxAge time.Duration) (*DB, error) {
-	db, err := sqlx.Open("sqlite", fmt.Sprintf("file:%s?_timeout=3000", path))
+	db, err := sqlx.Open("sqlite", fmt.Sprintf("file:%s?_timeout=3000", url.PathEscape(path)))
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database: %v", err)
 	}

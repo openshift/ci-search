@@ -29,6 +29,11 @@ func (g Graph) String() string {
 }
 
 func (s *Server) HandleGraph(w http.ResponseWriter, req *http.Request) {
+	if s.DB == nil {
+		http.Error(w, "Metrics graphing is disabled", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var graph Graph
 	var success bool
 	start := time.Now()
@@ -44,13 +49,8 @@ func (s *Server) HandleGraph(w http.ResponseWriter, req *http.Request) {
 
 	if err := req.ParseForm(); err != nil {
 		http.Error(w, fmt.Sprintf("Bad form input: %v", err), http.StatusBadRequest)
+		return
 	}
-
-	// db, err := s.DB.NewReadConnection()
-	// if err != nil {
-	// 	http.Error(w, fmt.Sprintf("Unable to connect to database: %v", err), http.StatusInternalServerError)
-	// 	return
-	// }
 
 	jobIdsByName := s.DB.JobsByName()
 	jobNamesById := make(map[int64]string)
