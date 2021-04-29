@@ -192,7 +192,7 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 	case includeRE != nil:
 		index.JobFilter = includeRE.MatchString
 	case excludeRE != nil:
-		index.JobFilter = excludeRE.MatchString
+		index.JobFilter = func(name string) bool { return !excludeRE.MatchString(name) }
 	}
 
 	if value := req.FormValue("maxMatches"); len(value) > 0 {
