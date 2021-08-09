@@ -44,11 +44,11 @@ func TestCommentStore(t *testing.T) {
 		}
 	}, func(*BugInfo) bool { return true })
 	lister := NewBugLister(informer.GetIndexer())
-	store := NewCommentStore(c, 5*time.Minute, false)
 	diskStore := NewCommentDiskStore(dir, 10*time.Minute)
+	store := NewCommentStore(c, 5*time.Minute, false, diskStore)
 
 	go informer.Run(ctx.Done())
-	go store.Run(ctx, informer, diskStore)
+	go store.Run(ctx, informer)
 	go diskStore.Run(ctx, lister, store, false)
 
 	klog.Infof("waiting for caches to sync")

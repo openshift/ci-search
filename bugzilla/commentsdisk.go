@@ -170,7 +170,7 @@ func (s *CommentDiskStore) CloseBug(bug *BugComments) error {
 	clone := bug.DeepCopyObject().(*BugComments)
 	clone.Info.Status = "CLOSED"
 	if err := s.write(&Bug{ObjectMeta: clone.ObjectMeta, Info: clone.Info}, clone); err != nil {
-		return fmt.Errorf("could not mark bug %s closed due to write error: %v", clone.Info.ID, err)
+		return fmt.Errorf("could not mark bug %d closed due to write error: %v", clone.Info.ID, err)
 	}
 	return nil
 }
