@@ -27,8 +27,14 @@ func TestCommentDiskStore_write(t *testing.T) {
 			Name: "181",
 		},
 		Info: BugInfo{
-			ID:      181,
-			Summary: "Test bug",
+			ID:            181,
+			Status:        "CLOSED",
+			Resolution:    "WORKSFORME",
+			Severity:      "urgent",
+			Summary:       "Test bug",
+			Creator:       "Katherine Johnson",
+			Version:       []string{"4.8"},
+			TargetRelease: []string{"---"},
 		},
 	}
 	comments := &BugComments{
@@ -38,8 +44,14 @@ func TestCommentDiskStore_write(t *testing.T) {
 			CreationTimestamp: metav1.Time{Time: time.Unix(100, 0).Local()},
 		},
 		Info: BugInfo{
-			ID:      181,
-			Summary: "Test bug",
+			ID:            181,
+			Status:        "CLOSED",
+			Resolution:    "WORKSFORME",
+			Severity:      "urgent",
+			Summary:       "Test bug",
+			Creator:       "Katherine Johnson",
+			Version:       []string{"4.8"},
+			TargetRelease: []string{"---"},
 		},
 		Comments: []BugComment{
 			{
@@ -96,7 +108,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("\n%s", string(data))
-	actualComments, err := readBugComments(path, 0)
+	actualComments, err := readBugComments(path)
 	if err != nil {
 		t.Fatal(err)
 	}

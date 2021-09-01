@@ -102,9 +102,10 @@ type BugInfo struct {
 	LastChangeTime     metav1.Time `json:"last_change_time"`
 	Environment        string      `json:"cf_environment"`
 	TargetRelease      []string    `json:"target_release"`
+	Version            []string    `json:"version"`
 }
 
-var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time", "cf_environment", "target_release", "component"}
+var bugInfoFields = []string{"id", "status", "resolution", "severity", "priority", "summary", "keywords", "whiteboard", "cf_internal_whiteboard", "creator", "assigned_to", "creation_time", "last_change_time", "cf_environment", "target_release", "component", "version"}
 
 type SearchBugsArgs struct {
 	LastChangeTime time.Time
