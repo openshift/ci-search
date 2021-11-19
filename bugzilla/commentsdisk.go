@@ -170,7 +170,7 @@ func (s *CommentDiskStore) CloseBug(bug *BugComments) error {
 	clone := bug.DeepCopyObject().(*BugComments)
 	clone.Info.Status = "CLOSED"
 	if err := s.write(&Bug{ObjectMeta: clone.ObjectMeta, Info: clone.Info}, clone); err != nil {
-		return fmt.Errorf("could not mark bug %s closed due to write error: %v", clone.Info.ID, err)
+		return fmt.Errorf("could not mark bug %d closed due to write error: %v", clone.Info.ID, err)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 
 	if _, err := fmt.Fprintf(
 		w,
-		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\nTarget Release: %s\nComponent: %s\nEnvironment:%s\n---\n",
+		"Bug %d: %s\nStatus: %s %s\nSeverity: %s\nCreator: %s\nAssigned To: %s\nKeywords: %s\nWhiteboard: %s\nInternal Whiteboard: %s\nTarget Release: %s\nVersion: %s\nComponent: %s\nEnvironment:%s\n---\n",
 		bug.Info.ID,
 		lineSafe(bug.Info.Summary),
 		lineSafe(bug.Info.Status),
@@ -214,6 +214,7 @@ func (s *CommentDiskStore) write(bug *Bug, comments *BugComments) error {
 		lineSafe(bug.Info.Whiteboard),
 		lineSafe(bug.Info.InternalWhiteboard),
 		arrayLineSafe(bug.Info.TargetRelease, ", "),
+		arrayLineSafe(bug.Info.Version, ", "),
 		arrayLineSafe(bug.Info.Component, ", "),
 		lineSafe(strings.ReplaceAll(bug.Info.Environment, "\x0D", "")),
 	); err != nil {
@@ -326,61 +327,67 @@ ScanHeader:
 			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
-			bug.Info.Status = parts[1]
+			bug.Info.Status = strings.TrimSpace(parts[1])
 			if len(parts) > 2 {
 				bug.Info.Resolution = parts[2]
 			}
 		case strings.HasPrefix(text, "Severity: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Severity = parts[1]
 		case strings.HasPrefix(text, "Creator: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Creator = parts[1]
 		case strings.HasPrefix(text, "Assigned To: "):
 			parts := strings.SplitN(text, " ", 3)
-			if len(parts) < 2 || len(parts[2]) == 0 {
+			if len(parts) < 3 || len(parts[2]) == 0 {
 				continue
 			}
 			bug.Info.AssignedTo = parts[2]
 		case strings.HasPrefix(text, "Keywords: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Keywords = strings.Split(parts[1], ", ")
 		case strings.HasPrefix(text, "Whiteboard: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Whiteboard = parts[1]
 		case strings.HasPrefix(text, "Internal Whiteboard: "):
 			parts := strings.SplitN(text, " ", 3)
-			if len(parts) < 1 || len(parts[2]) == 0 {
+			if len(parts) < 3 || len(parts[2]) == 0 {
 				continue
 			}
 			bug.Info.InternalWhiteboard = parts[2]
 		case strings.HasPrefix(text, "Target Release: "):
 			parts := strings.SplitN(text, " ", 3)
-			if len(parts) < 1 || len(parts[2]) == 0 {
+			if len(parts) < 3 || len(parts[2]) == 0 {
 				continue
 			}
 			bug.Info.TargetRelease = strings.Split(parts[2], ", ")
+		case strings.HasPrefix(text, "Version: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 2 || len(parts[1]) == 0 {
+				continue
+			}
+			bug.Info.Version = strings.Split(parts[1], ",")
 		case strings.HasPrefix(text, "Component: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Component = strings.Split(parts[1], ", ")
 		case strings.HasPrefix(text, "Environment: "):
 			parts := strings.SplitN(text, " ", 2)
-			if len(parts) < 1 || len(parts[1]) == 0 {
+			if len(parts) < 2 || len(parts[1]) == 0 {
 				continue
 			}
 			bug.Info.Environment = parts[1]
