@@ -386,9 +386,19 @@ function refresh() {
 			return { width: w, height: w * 1/2,	} 
 		}
 		valueFn = (u, sidx, idx) => {
+			let value = Number(data[sidx][idx])
+			if (value < 1) {
+				value = value.toFixed(3)
+			} else if (value < 10) {
+				value = value.toFixed(2)
+			} else if (value < 100) {
+				value = value.toFixed(1)
+			} else {
+				value = value.toFixed(0)
+			}
 			return {
 				Release: data[data.length-1][idx],
-				Value: Number(data[sidx][idx]).toFixed(1),
+				Value: value,
 			};
 		}
 		series.forEach((el,i) => {
