@@ -172,7 +172,7 @@ func handleAPIJobGraph(req *http.Request, db *sqlx.DB) (*APIJobGraphResponse, st
 			r.job_id = m.job_id AND r.job_id = job.id AND job.name IN (?) AND
 			m.job_number = r.job_number AND 
 			r.type == 'target' 
-		GROUP BY r.job_number
+		GROUP BY r.job_number, m.metric_selector
 		ORDER by r.timestamp, r.version, r.job_id, m.metric_selector;
 		`, metricName, jobNames)
 		if err != nil {
