@@ -1,4 +1,4 @@
-FROM registry.svc.ci.openshift.org/openshift/release:golang-1.13
+FROM registry.ci.openshift.org/openshift/release:golang-1.17
 WORKDIR /go/src/github.com/openshift/ci-search
 COPY . .
 RUN make build
