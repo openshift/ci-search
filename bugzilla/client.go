@@ -40,22 +40,11 @@ func (c *Client) addRequestHeaders(req *http.Request) {
 	}
 	// Bugzilla 5.0.4 and below don't support these headers
 	if len(c.APIKey) > 0 {
-		req.Header["X-Bugzilla-API-Key"] = []string{c.APIKey}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 	}
 	if len(c.Token) > 0 {
 		req.Header["X-Bugzilla-Token"] = []string{c.Token}
 	}
-}
-
-func (c *Client) newRequestValues() url.Values {
-	v := make(url.Values)
-	if len(c.APIKey) > 0 {
-		v.Set("Bugzilla_api_key", c.APIKey)
-	}
-	if len(c.APIKey) > 0 {
-		v.Set("Bugzilla_token", c.Token)
-	}
-	return v
 }
 
 func (c *Client) BugCommentsByID(ctx context.Context, bugs ...int) (*BugCommentsList, error) {
@@ -64,7 +53,7 @@ func (c *Client) BugCommentsByID(ctx context.Context, bugs ...int) (*BugComments
 	}
 	u := c.Base
 	u.Path = path.Join(u.Path, "bug", url.PathEscape(strconv.Itoa(bugs[0])), "comment")
-	v := c.newRequestValues()
+	v := make(url.Values)
 	for _, bug := range bugs[1:] {
 		v.Add("ids", strconv.Itoa(bug))
 	}
@@ -87,7 +76,7 @@ func (c *Client) SearchBugs(ctx context.Context, args SearchBugsArgs) (*BugInfoL
 	if args.IncludeFields == nil {
 		args.IncludeFields = bugInfoFields
 	}
-	v := c.newRequestValues()
+	v := make(url.Values)
 	args.Add(v)
 	u.RawQuery = v.Encode()
 
