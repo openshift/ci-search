@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-bindata/go-bindata"
-
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -36,9 +34,9 @@ import (
 	"github.com/openshift/ci-search/bugzilla"
 	"github.com/openshift/ci-search/metricdb"
 	"github.com/openshift/ci-search/metricdb/httpgraph"
-	"github.com/openshift/ci-search/pkg/bindata"
 	"github.com/openshift/ci-search/pkg/proc"
 	"github.com/openshift/ci-search/prow"
+	"github.com/openshift/ci-search/static"
 )
 
 func main() {
@@ -521,7 +519,7 @@ func (o *options) Run() error {
 			mux.Handle(path, handler)
 		}
 
-		mux.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(bindata.AssetFile())))
+		mux.PathPrefix("/static/").Handler(static.Handler("/static/"))
 		handle("/graph/metrics", http.HandlerFunc(g.HandleGraph))
 		handle("/graph/api/metrics/job", http.HandlerFunc(g.HandleAPIJobGraph))
 		handle("/chart", http.HandlerFunc(o.handleChart))

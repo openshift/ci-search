@@ -25,9 +25,6 @@ github.com/docker/go-units
 # github.com/fogleman/gg v1.3.0
 ## explicit
 github.com/fogleman/gg
-# github.com/go-bindata/go-bindata v3.1.2+incompatible
-## explicit
-github.com/go-bindata/go-bindata
 # github.com/go-latex/latex v0.0.0-20200518072620-0806b477ea35
 ## explicit; go 1.13
 github.com/go-latex/latex
