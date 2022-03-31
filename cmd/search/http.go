@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	jiraBaseClient "github.com/andygrunwald/go-jira"
 	units "github.com/docker/go-units"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
@@ -32,13 +33,14 @@ type nopFlusher struct{}
 func (_ nopFlusher) Flush() {}
 
 type Match struct {
-	Name         string            `json:"name,omitempty"`
-	LastModified metav1.Time       `json:"lastModified"`
-	FileType     string            `json:"filename"`
-	Context      []string          `json:"context,omitempty"`
-	MoreLines    int               `json:"moreLines,omitempty"`
-	URL          string            `json:"url,omitempty"`
-	Bug          *bugzilla.BugInfo `json:"bugInfo,omitempty"`
+	Name         string                `json:"name,omitempty"`
+	LastModified metav1.Time           `json:"lastModified"`
+	FileType     string                `json:"filename"`
+	Context      []string              `json:"context,omitempty"`
+	MoreLines    int                   `json:"moreLines,omitempty"`
+	URL          string                `json:"url,omitempty"`
+	Bug          *bugzilla.BugInfo     `json:"bugInfo,omitempty"`
+	Issue        *jiraBaseClient.Issue `json:"issues,omitempty"`
 }
 
 type SearchResponseResult struct {
@@ -117,7 +119,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var searchTypeOptions []string
-	for _, searchType := range []string{"bug+junit", "bug", "junit", "build-log", "all"} {
+	for _, searchType := range []string{"bug+issue+junit", "bug+junit", "bug+issue", "issue", "bug", "junit", "build-log", "all"} {
 		var selected string
 		if searchType == index.SearchType {
 			selected = "selected"
@@ -182,7 +184,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	if len(index.Search[0]) == 0 {
 		stats := o.Stats()
 
-		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs)
+		fmt.Fprintf(writer, htmlEmptyPage, o.DeckURI, units.HumanSize(float64(stats.Size)), stats.Entries, stats.FailedJobs, stats.Jobs, stats.Bugs, stats.Issues)
 		flusher.Flush()
 
 		gw := &httpgraph.GraphDataWriter{}
@@ -217,8 +219,8 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 			}).
 			Done(""),
 		)
-		fmt.Fprintf(writer, htmlEmptyPageGraph)
-		fmt.Fprintf(writer, htmlPageEnd)
+		fmt.Fprint(writer, htmlEmptyPageGraph)
+		fmt.Fprint(writer, htmlPageEnd)
 		return
 	}
 
@@ -232,7 +234,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], 0, err)
 			fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
-			fmt.Fprintf(writer, htmlPageEnd)
+			fmt.Fprint(writer, htmlPageEnd)
 			return
 		}
 		bw := bufio.NewWriterSize(writer, 2048)
@@ -253,7 +255,28 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 							bw.Flush()
 							klog.Errorf("Search %q failed with %d matches: command failed: %v", index.Search[0], numRuns, err)
 							fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
-							fmt.Fprintf(writer, htmlPageEnd)
+							fmt.Fprint(writer, htmlPageEnd)
+							return
+						}
+					}
+					fmt.Fprintln(bw, "</pre></td></tr>")
+				}
+			}
+			for _, issue := range result.Issues {
+				age, _ := formatAge(issue.Matches[0].LastModified.Time, start, index.MaxAge)
+				name := issue.Name
+				if i := strings.Index(name, ": "); i != -1 {
+					name = name[i+2:]
+				}
+				fmt.Fprintf(bw, "<tr><td><a target=\"_blank\" href=\"%s\">#%d</a></td><td>%s</td><td class=\"text-nowrap\">%s</td><td class=\"col-12\">%s</td></tr>\n", template.HTMLEscapeString(issue.URI.String()), issue.Number, template.HTMLEscapeString(issue.Matches[0].FileType), template.HTMLEscapeString(age), template.HTMLEscapeString(name))
+				if index.Context >= 0 {
+					fmt.Fprintf(bw, "<tr class=\"row-match\"><td class=\"\" colspan=\"4\"><pre class=\"small\">")
+					for _, match := range issue.Matches {
+						if err := renderLinesString(bw, match.Context, match.MoreLines); err != nil {
+							bw.Flush()
+							klog.Errorf("Search %q failed with %d matches: command failed: %v", index.Search[0], numRuns, err)
+							fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
+							fmt.Fprint(writer, htmlPageEnd)
 							return
 						}
 					}
@@ -299,7 +322,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 								bw.Flush()
 								klog.Errorf("Search %q failed with %d matches: command failed: %v", index.Search[0], numRuns, err)
 								fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
-								fmt.Fprintf(writer, htmlPageEnd)
+								fmt.Fprint(writer, htmlPageEnd)
 								return
 							}
 							fmt.Fprintln(bw, "</pre></td></tr>")
@@ -325,7 +348,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		}
 		fmt.Fprintf(writer, `</em> - <a href="/">clear search</a> | <a href="/chart?%s">chart view</a> - source code located <a target="_blank" href="https://github.com/openshift/ci-search">on github</a></p>`, template.HTMLEscapeString(req.URL.RawQuery))
 
-		if numRuns == 0 && len(result.Bugs) == 0 {
+		if numRuns == 0 && len(result.Bugs) == 0 && len(result.Issues) == 0 {
 			fmt.Fprintf(writer, `<p style="padding-top: 1em;"><em>No results found.</em></p><p><em>Search uses <a target="_blank" href="https://docs.rs/regex/0.2.5/regex/#syntax">ripgrep regular-expression patterns</a> to find results. Try simplifying your search or using case-insensitive options.</em></p>`)
 		}
 
@@ -334,7 +357,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			klog.Errorf("Search %q failed with %d results: command failed: %v", index.Search[0], count, err)
 			fmt.Fprintf(writer, `<p class="alert alert-danger">error: %s</p>`, template.HTMLEscapeString(err.Error()))
-			fmt.Fprintf(writer, htmlPageEnd)
+			fmt.Fprint(writer, htmlPageEnd)
 			return
 		}
 		klog.V(2).Infof("Search %q over %q for job %s/%s completed with %d results", index.Search[0], index.SearchType, index.IncludeName, index.ExcludeName, count)
@@ -348,7 +371,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Fprintf(writer, "</div>")
 
-	fmt.Fprintf(writer, htmlPageEnd)
+	fmt.Fprint(writer, htmlPageEnd)
 
 	success = true
 }
@@ -683,7 +706,7 @@ const htmlEmptyPage = `
 </ul>
 <div id="width"></div>
 <p id="graph">
-<p>Currently indexing %s across %d results, %d failed jobs of %d, and %d bugs</p>
+<p>Currently indexing %s across %d results, %d failed jobs of %d, %d bugs and %d issues</p>
 </div>
 `
 const htmlEmptyPageGraph = `

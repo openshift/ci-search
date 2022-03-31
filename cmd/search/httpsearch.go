@@ -9,10 +9,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/openshift/ci-search/pkg/httpwriter"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/pkg/httpwriter"
 )
 
 func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
@@ -20,7 +21,7 @@ func (o *options) handleSearch(w http.ResponseWriter, req *http.Request) {
 	var index *Index
 	var success bool
 	defer func() {
-		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Since(start).Truncate(time.Millisecond), success)
 	}()
 
 	var err error
@@ -64,7 +65,7 @@ func (o *options) handleSearchV2(w http.ResponseWriter, req *http.Request) {
 	var index *Index
 	var success bool
 	defer func() {
-		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+		klog.Infof("Render search %s duration=%s success=%t", index.String(), time.Since(start).Truncate(time.Millisecond), success)
 	}()
 
 	var err error
@@ -137,7 +138,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			klog.Errorf("Failed to compute job URI for %q", name)
 			return nil
 		}
-		if metadata.FileType != "bug" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
+		if metadata.FileType != "bug" && metadata.FileType != "issue" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 			return nil
 		}
 		uri := metadata.URI.String()
@@ -156,6 +157,7 @@ func (o *options) searchResult(ctx context.Context, index *Index) (map[string]ma
 			MoreLines: moreLines,
 			Name:      metadata.Name,
 			Bug:       metadata.Bug,
+			Issue:     metadata.Issue,
 		}
 
 		for _, m := range matches {
@@ -188,14 +190,27 @@ type SearchBugResult struct {
 	Matches []Match
 }
 
-type SearchResult struct {
-	Matches  int
-	Bugs     []SearchBugResult
-	Jobs     []SearchJobsResult
-	JobNames sets.String
+//jira
+type SearchIssuesResult struct {
+	Name    string
+	Number  int
+	URI     *url.URL
+	Matches []Match
+}
 
+type SearchResult struct {
+	Matches int
+
+	Bugs        []SearchBugResult
 	bugByNumber map[int]int
-	jobByName   map[string]int
+
+	//jira
+	Issues        []SearchIssuesResult
+	issueByNumber map[int]int
+
+	Jobs      []SearchJobsResult
+	JobNames  sets.String
+	jobByName map[string]int
 }
 
 func (s *SearchResult) BugByNumber(num int) *SearchBugResult {
@@ -210,6 +225,21 @@ func (s *SearchResult) BugByNumber(num int) *SearchBugResult {
 	s.Bugs = append(s.Bugs, SearchBugResult{Number: num})
 	s.bugByNumber[num] = i
 	return &s.Bugs[i]
+}
+
+//jira
+func (s *SearchResult) IssueByNumber(num int) *SearchIssuesResult {
+	i, ok := s.issueByNumber[num]
+	if ok {
+		return &s.Issues[i]
+	}
+	if s.issueByNumber == nil {
+		s.issueByNumber = make(map[int]int)
+	}
+	i = len(s.Issues)
+	s.Issues = append(s.Issues, SearchIssuesResult{Number: num})
+	s.issueByNumber[num] = i
+	return &s.Issues[i]
 }
 
 func (s *SearchResult) JobByName(name string) *SearchJobsResult {
@@ -246,7 +276,7 @@ func (o *options) orderedSearchResults(ctx context.Context, index *Index) (*Sear
 			klog.Errorf("Failed to compute job URI for %q", name)
 			return nil
 		}
-		if metadata.FileType != "bug" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
+		if metadata.FileType != "bug" && metadata.FileType != "issue" && index.JobFilter != nil && !index.JobFilter(metadata.Name) {
 			return nil
 		}
 		switch metadata.FileType {
@@ -257,6 +287,20 @@ func (o *options) orderedSearchResults(ctx context.Context, index *Index) (*Sear
 				bug.URI = metadata.URI
 			}
 			bug.Matches = append(bug.Matches, Match{
+				LastModified: metav1.Time{Time: metadata.LastModified},
+				FileType:     metadata.FileType,
+				MoreLines:    moreLines,
+				Context:      trimMatchStrings(matches, make([]string, 0, len(matches))),
+			})
+			count++
+			return nil
+		case "issue":
+			issue := result.IssueByNumber(metadata.Number)
+			if len(issue.Name) == 0 {
+				issue.Name = metadata.Name
+				issue.URI = metadata.URI
+			}
+			issue.Matches = append(issue.Matches, Match{
 				LastModified: metav1.Time{Time: metadata.LastModified},
 				FileType:     metadata.FileType,
 				MoreLines:    moreLines,

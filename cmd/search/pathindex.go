@@ -161,10 +161,7 @@ func (index *pathIndex) Load() error {
 	}
 
 	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].age.Before(ordered[j].age) {
-			return false
-		}
-		return true
+		return !ordered[i].age.Before(ordered[j].age)
 	})
 	pathIndex := make(map[string]int, len(ordered))
 	for i, item := range ordered {
@@ -183,7 +180,7 @@ func (index *pathIndex) Load() error {
 
 func (i *pathIndex) FilenamesForSearchType(searchType string) []string {
 	switch searchType {
-	case "", "bug+junit", "junit":
+	case "", "bug+junit", "junit", "bug+issue+junit":
 		return []string{"junit.failures"}
 	case "build-log":
 		return []string{"build-log.txt"}

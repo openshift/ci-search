@@ -26,7 +26,7 @@ type CommandGenerator interface {
 }
 
 type RipgrepSourceArguments interface {
-	// SearchPaths searches for paths matching the index's SearchType
+	// RipgrepSourceArguments SearchPaths searches for paths matching the index's SearchType
 	// and MaxAge, and returns them as a slice of filesystem paths.
 	RipgrepSourceArguments(*Index, sets.String) (args []string, paths []string, err error)
 }
@@ -168,7 +168,7 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 
 	maxLines := index.MaxMatches
 	if index.Context > 0 {
-		maxLines *= (index.Context*2 + 1)
+		maxLines *= index.Context*2 + 1
 	}
 
 	br := bufio.NewReaderSize(pr, 512*1024)
