@@ -22,7 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	gcpoption "google.golang.org/api/option"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -30,8 +29,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
+	jiraClient "k8s.io/test-infra/prow/jira"
 
 	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/jira"
 	"github.com/openshift/ci-search/metricdb"
 	"github.com/openshift/ci-search/metricdb/httpgraph"
 	"github.com/openshift/ci-search/pkg/proc"
@@ -45,7 +46,7 @@ func main() {
 	original.Set("alsologtostderr", "true")
 	original.Set("v", "2")
 
-	// the reaper handles duties running as PID 1 when in a contanier
+	// the reaper handles duties running as PID 1 when in a container
 	go proc.StartPeriodicReaper(10)
 
 	opt := &options{
@@ -84,6 +85,11 @@ func main() {
 	flag.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
 	flag.StringVar(&opt.BugzillaSearch, "bugzilla-search", opt.BugzillaSearch, "A quicksearch query to search for bugs to index.")
 
+	// jira
+	flag.StringVar(&opt.JiraURL, "jira-url", opt.JiraURL, "The URL of a Jira server to index issues from.")
+	flag.StringVar(&opt.JiraTokenPath, "jira-token-file", opt.JiraTokenPath, "A file to read a Jira token from.")
+	flag.StringVar(&opt.JiraSearch, "jira-search", opt.JiraSearch, "A JQL query to search for issues to index.")
+
 	flag.BoolVar(&opt.NoIndex, "disable-indexing", opt.NoIndex, "Disable all indexing to disk.")
 
 	if err := cmd.Execute(); err != nil {
@@ -113,6 +119,14 @@ type options struct {
 	BugzillaSearch    string
 	BugzillaTokenPath string
 
+	// jira
+	JiraURL        string
+	JiraSearch     string
+	JiraTokenPath  string
+	issuesPath     string
+	issues         *jira.CommentStore
+	issueURIPrefix *url.URL
+
 	NoIndex bool
 
 	generator CommandGenerator
@@ -130,8 +144,12 @@ type options struct {
 }
 
 type IndexStats struct {
-	Size    int64
-	Bugs    int
+	Size int64
+	Bugs int
+
+	// jira
+	Issues int
+
 	Entries int
 
 	Jobs       int
@@ -150,6 +168,9 @@ type JobCountBucket struct {
 func (o *options) Stats() IndexStats {
 	j := o.jobsIndex.Stats()
 	b := o.bugs.Stats()
+
+	// jira
+	is := o.issues.Stats()
 
 	var totalJobs, failedJobs int
 	jobs, _ := o.jobAccessor.List(labels.Everything())
@@ -208,6 +229,7 @@ func (o *options) Stats() IndexStats {
 		Entries:    j.Entries,
 		Size:       j.Size,
 		Bugs:       b.Bugs,
+		Issues:     is.Issues,
 		Jobs:       totalJobs,
 		FailedJobs: failedJobs,
 		Buckets:    buckets,
@@ -223,10 +245,51 @@ func (o *options) RipgrepSourceArguments(index *Index, jobNames sets.String) ([]
 			return nil, nil, fmt.Errorf("searching on bugs is not enabled")
 		}
 		return []string{"--glob", "bug-*"}, []string{o.bugsPath}, nil
-	case "all", "bug+junit":
+	//jira
+	case "issue":
+		if o.issueURIPrefix == nil {
+			return nil, nil, fmt.Errorf("searching on issues is not enabled")
+		}
+		return []string{"--glob", "issue__*"}, []string{o.issuesPath}, nil
+	case "bug+issue":
 		if o.bugURIPrefix != nil {
 			args = []string{"--glob", "bug-*"}
 			additionalPaths = []string{o.bugsPath}
+		}
+		if o.issueURIPrefix != nil {
+			args = append(args, []string{"--glob", "issue__*"}...)
+			additionalPaths = append(additionalPaths, []string{o.issuesPath}...)
+		}
+		return args, additionalPaths, nil
+	case "bug+junit":
+		if o.bugURIPrefix != nil {
+			args = []string{"--glob", "bug-*"}
+			additionalPaths = []string{o.bugsPath}
+		}
+		if o.jobURIPrefix == nil {
+			return nil, nil, fmt.Errorf("searching on jobs is not enabled")
+		}
+		paths, err := o.jobsIndex.SearchPaths(index, jobNames)
+		if err != nil {
+			return nil, nil, err
+		}
+		if paths == nil {
+			if names := o.jobsIndex.FilenamesForSearchType(index.SearchType); len(names) > 0 {
+				for _, name := range names {
+					args = append(args, "--glob", name+"*")
+				}
+				args = append(args, o.jobsPath)
+			}
+		}
+		return args, append(paths, additionalPaths...), nil
+	case "all", "bug+issue+junit":
+		if o.bugURIPrefix != nil {
+			args = []string{"--glob", "bug-*"}
+			additionalPaths = []string{o.bugsPath}
+		}
+		if o.issueURIPrefix != nil {
+			args = append(args, []string{"--glob", "issue__*"}...)
+			additionalPaths = append(additionalPaths, []string{o.issuesPath}...)
 		}
 		fallthrough
 	default:
@@ -297,6 +360,53 @@ func (o *options) MetadataFor(path string) (Result, error) {
 
 		return result, nil
 
+	// jira
+	case strings.HasPrefix(path, "issues/"):
+		if o.issueURIPrefix == nil {
+			return result, fmt.Errorf("searching on issues is not enabled")
+		}
+		path = strings.TrimPrefix(path, "issues/")
+
+		result.FileType = "issue"
+		name := path
+		if !strings.HasPrefix(name, "issue__") {
+			return result, fmt.Errorf("expected issue issues/issue__KEY_ID: %s", path)
+		}
+		nameParts := strings.Split(name, "__")
+		name = nameParts[2]
+		id, err := strconv.Atoi(name)
+		if err != nil {
+			return result, fmt.Errorf("expected path issues/issue__KEY_ID: %s", path)
+		}
+		result.Name = fmt.Sprintf("JiraIssue %d", id)
+		result.Number = id
+
+		copied := *o.issueURIPrefix
+		copied.Path = fmt.Sprintf("%s/%s", "browse", nameParts[1])
+		result.URI = &copied
+
+		if comments, ok := o.issues.Get(id); ok {
+			// take the time of last issue update or comment, whichever is newer
+			if l := len(comments.Comments); l > 0 {
+				result.LastModified = jira.StringToTime(comments.Comments[l-1].Created)
+			}
+			if time.Time(comments.Info.Fields.Updated).After(result.LastModified) {
+				result.LastModified = time.Time(comments.Info.Fields.Updated)
+			}
+			if len(comments.Info.Fields.Summary) > 0 {
+				if len(comments.Info.Fields.Status.Name) > 0 {
+					result.Name = fmt.Sprintf("JiraIssue %d: %s %s", id, comments.Info.Fields.Summary, comments.Info.Fields.Status.Name)
+				} else {
+					result.Name = fmt.Sprintf("JiraIssue %d: %s", id, comments.Info.Fields.Summary)
+				}
+			}
+			result.Issue = &comments.Info
+		}
+
+		result.IgnoreAge = true
+
+		return result, nil
+
 	case strings.HasPrefix(path, "jobs/"):
 		if o.jobURIPrefix == nil {
 			return result, fmt.Errorf("searching on jobs is not enabled")
@@ -355,6 +465,9 @@ func (o *options) Run() error {
 	o.jobsPath = filepath.Join(o.Path, "jobs")
 	o.bugsPath = filepath.Join(o.Path, "bugs")
 
+	// jira
+	o.issuesPath = filepath.Join(o.Path, "issues")
+
 	indexedPaths := &pathIndex{
 		base:    o.jobsPath,
 		baseURI: jobURIPrefix,
@@ -404,7 +517,7 @@ func (o *options) Run() error {
 		)
 		lister := bugzilla.NewBugLister(informer.GetIndexer())
 		if err := os.MkdirAll(o.bugsPath, 0777); err != nil {
-			return fmt.Errorf("unable to create directory for artifact: %v", err)
+			return fmt.Errorf("unable to create directory for artifact: %w", err)
 		}
 		diskStore := bugzilla.NewCommentDiskStore(o.bugsPath, o.MaxAge)
 		store := bugzilla.NewCommentStore(c, 2*time.Minute, false, diskStore)
@@ -418,6 +531,63 @@ func (o *options) Run() error {
 		klog.Infof("Started indexing bugzilla %s with query %q", o.BugzillaURL, o.BugzillaSearch)
 	} else {
 		o.bugs = bugzilla.NewCommentStore(nil, 0, false, nil)
+	}
+
+	// jira
+	if len(o.JiraURL) > 0 {
+		jiraURL, err := url.Parse(o.JiraURL)
+		if err != nil {
+			klog.Exitf("Unable to parse --jira-url: %v", err)
+		}
+		u := *jiraURL
+		u.Path = "issues/"
+		o.issueURIPrefix = &u
+
+		if len(o.JiraSearch) == 0 {
+			klog.Exitf("--jira-search is required")
+		}
+		tokenData, err := ioutil.ReadFile(o.JiraTokenPath)
+		if err != nil {
+			klog.Exitf("Failed to load --jira-token-file: %v", err)
+		}
+		options := func(options *jiraClient.Options) {
+			options.BearerAuth = func() (token string) {
+				return string(bytes.TrimSpace(tokenData))
+			}
+		}
+		jc, _ := jiraClient.NewClient(o.JiraURL, options)
+		c := &jira.Client{
+			Client: jc,
+		}
+
+		jiraInformer := jira.NewInformer(
+			c,
+			10*time.Minute,
+			8*time.Hour,
+			30*time.Minute,
+			func(metav1.ListOptions) jira.SearchIssuesArgs {
+				return jira.SearchIssuesArgs{
+					Jql: o.JiraSearch,
+				}
+			},
+			jira.FilterPrivateIssues,
+		)
+		jiraLister := jira.NewIssueLister(jiraInformer.GetIndexer())
+		if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
+			return fmt.Errorf("unable to create directory for artifact: %w", err)
+		}
+		jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
+		jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
+
+		o.issues = jiraStore
+
+		ctx := context.Background()
+		go jiraInformer.Run(ctx.Done())
+		go jiraStore.Run(ctx, jiraInformer)
+		go jiraDiskStore.Run(ctx, jiraLister, jiraStore, o.NoIndex)
+		klog.Infof("Started indexing jira %s with query %q", o.JiraURL, o.JiraSearch)
+	} else {
+		o.issues = jira.NewCommentStore(nil, 0, nil)
 	}
 
 	if len(o.DeckURI) > 0 {
@@ -456,7 +626,7 @@ func (o *options) Run() error {
 		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
 		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
-			return fmt.Errorf("unable to create directory for artifact: %v", err)
+			return fmt.Errorf("unable to create directory for artifact: %w", err)
 		}
 
 		h := store.Handler()

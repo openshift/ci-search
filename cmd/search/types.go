@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	jiraBaseClient "github.com/andygrunwald/go-jira"
+
 	"github.com/openshift/ci-search/bugzilla"
 )
 
@@ -35,6 +37,9 @@ type Result struct {
 	IgnoreAge bool
 
 	Bug *bugzilla.BugInfo
+
+	// jira
+	Issue *jiraBaseClient.Issue
 }
 
 type Index struct {
@@ -123,7 +128,7 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		Mode: mode,
 	}
 
-	index.Search, _ = req.Form["search"]
+	index.Search = req.Form["search"]
 	if len(index.Search) == 0 && mode == "chart" {
 
 		// CI-cluster issues
@@ -149,12 +154,18 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 		if mode == "chart" {
 			index.SearchType = "all"
 		} else {
-			index.SearchType = "bug+junit"
+			index.SearchType = "bug+issue+junit"
 		}
+	case "bug+issue+junit":
+		index.SearchType = "bug+issue+junit"
 	case "bug+junit":
 		index.SearchType = "bug+junit"
+	case "bug+issue":
+		index.SearchType = "bug+issue"
 	case "bug":
 		index.SearchType = "bug"
+	case "issue":
+		index.SearchType = "issue"
 	case "junit":
 		index.SearchType = "junit"
 	case "build-log":
@@ -162,7 +173,7 @@ func parseRequest(req *http.Request, mode string, maxAge time.Duration) (*Index,
 	case "all":
 		index.SearchType = "all"
 	default:
-		return nil, fmt.Errorf("search type must be 'bug', 'junit', 'build-log', or 'all'")
+		return nil, fmt.Errorf("search type must be 'bug', 'issue, 'junit', 'build-log', or 'all'")
 	}
 
 	var includeRE *regexp.Regexp

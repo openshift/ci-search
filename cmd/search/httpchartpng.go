@@ -48,7 +48,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 	var index *Index
 	var success bool
 	defer func() {
-		klog.Infof("Render chart PNG %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+		klog.Infof("Render chart PNG %s duration=%s success=%t", index.String(), time.Since(start).Truncate(time.Millisecond), success)
 	}()
 
 	var err error
@@ -177,7 +177,7 @@ func (o *options) handleChartPNG(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		draw.DrawMask(img, bounds, &image.Uniform{clr}, image.ZP, scatter, image.ZP, draw.Over)
+		draw.DrawMask(img, bounds, &image.Uniform{C: clr}, image.Point{}, scatter, image.Point{}, draw.Over)
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age=30")

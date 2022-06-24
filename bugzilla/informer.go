@@ -200,10 +200,7 @@ func (w *periodicWatcher) run() {
 		// sort the list from oldest change to newest change
 		sort.Slice(list.Items, func(i, j int) bool {
 			a, b := list.Items[i].Info.LastChangeTime.Time, list.Items[j].Info.LastChangeTime.Time
-			if a.After(b) {
-				return false
-			}
-			return true
+			return !a.After(b)
 		})
 		for i := range list.Items {
 			eventType := watch.Modified

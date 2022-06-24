@@ -7,17 +7,18 @@ import (
 	"sort"
 	"time"
 
-	"github.com/openshift/ci-search/pkg/httpwriter"
-	"github.com/openshift/ci-search/prow"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog"
+
+	"github.com/openshift/ci-search/pkg/httpwriter"
+	"github.com/openshift/ci-search/prow"
 )
 
 func (o *options) handleJobs(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	var success bool
 	defer func() {
-		klog.Infof("Render jobs duration=%s success=%t", time.Now().Sub(start).Truncate(time.Millisecond), success)
+		klog.Infof("Render jobs duration=%s success=%t", time.Since(start).Truncate(time.Millisecond), success)
 	}()
 
 	if o.jobAccessor == nil {
