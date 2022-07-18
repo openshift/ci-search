@@ -35,9 +35,10 @@ func TestCommentDiskStore_write(t *testing.T) {
 				Assignee: &jiraBaseClient.User{
 					DisplayName: "John Doe",
 				},
-				Status:     &jiraBaseClient.Status{Name: "In Progress"},
-				Resolution: &jiraBaseClient.Resolution{Name: "Resolution"},
-				Priority:   &jiraBaseClient.Priority{Name: "Urgent"},
+				Description: "This is the description",
+				Status:      &jiraBaseClient.Status{Name: "In Progress"},
+				Resolution:  &jiraBaseClient.Resolution{Name: "Resolution"},
+				Priority:    &jiraBaseClient.Priority{Name: "Urgent"},
 
 				Summary: "This is a test issue description",
 				Creator: &jiraBaseClient.User{DisplayName: "John Smith"},
@@ -58,9 +59,10 @@ func TestCommentDiskStore_write(t *testing.T) {
 				Assignee: &jiraBaseClient.User{
 					DisplayName: "John Doe",
 				},
-				Status:     &jiraBaseClient.Status{Name: "In Progress"},
-				Resolution: &jiraBaseClient.Resolution{Name: "Resolution"},
-				Priority:   &jiraBaseClient.Priority{Name: "Urgent"},
+				Description: "This is the description",
+				Status:      &jiraBaseClient.Status{Name: "In Progress"},
+				Resolution:  &jiraBaseClient.Resolution{Name: "Resolution"},
+				Priority:    &jiraBaseClient.Priority{Name: "Urgent"},
 
 				Summary: "This is a test issue description",
 				Creator: &jiraBaseClient.User{DisplayName: "John Smith"},
@@ -79,7 +81,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 				ID:      "1",
 				Created: Metav1ToJiraTimeString(metav1.Time{Time: time.Unix(150, 0).Local()}),
 				Updated: Metav1ToJiraTimeString(metav1.Time{Time: time.Unix(200, 0).Local()}),
-				Author:  jiraBaseClient.User{DisplayName: "Monthly Python"},
+				Author:  jiraBaseClient.User{DisplayName: "Monty Python"},
 				Body:    "Text with newlines\n\nNewline\n",
 			},
 			{

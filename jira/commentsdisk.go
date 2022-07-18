@@ -245,9 +245,10 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 
 	if _, err := fmt.Fprintf(
 		w,
-		"JiraIssue %s: %s\nStatus: %s\nResolution: %s\nPriority: %s\nCreator: %s\nAssigned To: %s\nLabels: %s\nTarget Version: %s\n---\n",
+		"JiraIssue %s: %s\nDescription: %s \nStatus: %s\nResolution: %s\nPriority: %s\nCreator: %s\nAssigned To: %s\nLabels: %s\nTarget Version: %s\n---\n",
 		issue.Info.ID,
 		lineSafe(issue.Info.Fields.Summary),
+		lineSafe(issue.Info.Fields.Description),
 		statusFieldName(issue.Info.Fields.Status),
 		resolutionFieldName(issue.Info.Fields.Resolution),
 		priorityFieldName(issue.Info.Fields.Priority),
@@ -372,6 +373,12 @@ ScanHeader:
 	for sr.Scan() {
 		text := sr.Text()
 		switch {
+		case strings.HasPrefix(text, "Description: "):
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) < 2 || len(parts[1]) == 0 {
+				continue
+			}
+			fields.Description = strings.TrimSpace(parts[1])
 		case strings.HasPrefix(text, "Status: "):
 			parts := strings.SplitN(text, " ", 2)
 			if len(parts) < 2 || len(parts[1]) == 0 {
