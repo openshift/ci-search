@@ -173,8 +173,8 @@ func (s *CommentStore) filterComments(issueComments *[]jiraBaseClient.Issue) {
 	if s.includePrivate {
 		return
 	}
-	var filteredCommentList []*jiraBaseClient.Comment
 	for _, issue := range *issueComments {
+		var filteredCommentList []*jiraBaseClient.Comment
 		for _, comment := range issue.Fields.Comments.Comments {
 			if comment.Visibility.Value == "" {
 				filteredCommentList = append(filteredCommentList, comment)
