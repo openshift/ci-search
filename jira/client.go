@@ -81,6 +81,14 @@ type Client struct {
 	Client jiraClient.Client
 }
 
+func addTimeToJQL(t time.Time, jql string) string {
+	if !t.IsZero() {
+		// JQL "updated" accepts this format: "yyyy/MM/dd HH:mm"
+		roundedTime := fmt.Sprintf("%d/%d/%d %d:%d", t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute())
+		return fmt.Sprintf("%s&updated>='%s'", jql, roundedTime)
+	}
+	return jql
+}
 func (c *Client) IssueCommentsByID(ctx context.Context, issues ...int) ([]jiraBaseClient.Issue, error) {
 	var searchOptions jiraBaseClient.SearchOptions
 	jqlQuery := fmt.Sprintf("id IN (%s)", jqlParseIds(issues))
@@ -92,8 +100,12 @@ func (c *Client) IssueCommentsByID(ctx context.Context, issues ...int) ([]jiraBa
 
 func (c *Client) SearchIssues(ctx context.Context, args SearchIssuesArgs) ([]jiraBaseClient.Issue, error) {
 	var searchOptions jiraBaseClient.SearchOptions
-	if args.MaxResults > 0 {
-		searchOptions.MaxResults = args.MaxResults
+	if args.MaxResults >= 0 {
+		if args.MaxResults == 0 {
+			searchOptions.MaxResults = 500
+		} else {
+			searchOptions.MaxResults = args.MaxResults
+		}
 	}
 	if args.StartAt > 0 {
 		searchOptions.StartAt = args.StartAt
@@ -101,24 +113,8 @@ func (c *Client) SearchIssues(ctx context.Context, args SearchIssuesArgs) ([]jir
 	if len(args.IncludeFields) > 0 {
 		searchOptions.Fields = issueInfoFields
 	}
-	search, _, err := c.Client.SearchWithContext(ctx, args.Jql, &searchOptions)
-	var filterPrivateIssues []jiraBaseClient.Issue
-	for _, bug := range search {
-		if FilterPrivateIssues(&bug) {
-			filterPrivateIssues = append(filterPrivateIssues, bug)
-		}
-	}
-	if args.LastChangeTime.IsZero() {
-		return filterPrivateIssues, err
-	}
-	args.LastChangeTime.UTC().Format("2006-01-02T15:04:05.000-0700")
-	var filterByTimestamp []jiraBaseClient.Issue
-	for _, bug := range filterPrivateIssues {
-		if !args.LastChangeTime.After(time.Time(bug.Fields.Updated)) {
-			filterByTimestamp = append(filterByTimestamp, bug)
-		}
-	}
-	return filterByTimestamp, err
+	search, _, err := c.Client.SearchWithContext(ctx, addTimeToJQL(args.LastChangeTime, args.Jql), &searchOptions)
+	return search, err
 }
 
 func (c *Client) IssuesByID(ctx context.Context, issues ...int) ([]jiraBaseClient.Issue, error) {
