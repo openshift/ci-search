@@ -38,6 +38,8 @@ type Result struct {
 
 	Bug *bugzilla.BugInfo
 
+	// Key is the identifier of a Jira issue
+	Key string
 	// jira
 	Issue *jiraBaseClient.Issue
 }

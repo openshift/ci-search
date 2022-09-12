@@ -268,7 +268,7 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 				if i := strings.Index(name, ": "); i != -1 {
 					name = name[i+2:]
 				}
-				fmt.Fprintf(bw, "<tr><td><a target=\"_blank\" href=\"%s\">#%d</a></td><td>%s</td><td class=\"text-nowrap\">%s</td><td class=\"col-12\">%s</td></tr>\n", template.HTMLEscapeString(issue.URI.String()), issue.Number, template.HTMLEscapeString(issue.Matches[0].FileType), template.HTMLEscapeString(age), template.HTMLEscapeString(name))
+				fmt.Fprintf(bw, "<tr><td><a class=\"text-nowrap\" target=\"_blank\" href=\"%s\">#%s</a></td><td>%s</td><td class=\"text-nowrap\">%s</td><td class=\"col-12\">%s</td></tr>\n", template.HTMLEscapeString(issue.URI.String()), template.HTMLEscapeString(issue.Key), template.HTMLEscapeString(issue.Matches[0].FileType), template.HTMLEscapeString(age), template.HTMLEscapeString(name))
 				if index.Context >= 0 {
 					fmt.Fprintf(bw, "<tr class=\"row-match\"><td class=\"\" colspan=\"4\"><pre class=\"small\">")
 					for _, match := range issue.Matches {

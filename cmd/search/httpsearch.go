@@ -194,6 +194,7 @@ type SearchBugResult struct {
 type SearchIssuesResult struct {
 	Name    string
 	Number  int
+	Key     string
 	URI     *url.URL
 	Matches []Match
 }
@@ -299,6 +300,7 @@ func (o *options) orderedSearchResults(ctx context.Context, index *Index) (*Sear
 			if len(issue.Name) == 0 {
 				issue.Name = metadata.Name
 				issue.URI = metadata.URI
+				issue.Key = metadata.Key
 			}
 			issue.Matches = append(issue.Matches, Match{
 				LastModified: metav1.Time{Time: metadata.LastModified},
