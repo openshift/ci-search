@@ -378,8 +378,9 @@ func (o *options) MetadataFor(path string) (Result, error) {
 		if err != nil {
 			return result, fmt.Errorf("expected path issues/issue__KEY_ID: %s", path)
 		}
-		result.Name = fmt.Sprintf("JiraIssue %d", id)
+		result.Name = fmt.Sprintf("Issue %d", id)
 		result.Number = id
+		result.Key = nameParts[1]
 
 		copied := *o.issueURIPrefix
 		copied.Path = fmt.Sprintf("%s/%s", "browse", nameParts[1])
@@ -395,9 +396,9 @@ func (o *options) MetadataFor(path string) (Result, error) {
 			}
 			if len(comments.Info.Fields.Summary) > 0 {
 				if len(comments.Info.Fields.Status.Name) > 0 {
-					result.Name = fmt.Sprintf("JiraIssue %d: %s %s", id, comments.Info.Fields.Summary, comments.Info.Fields.Status.Name)
+					result.Name = fmt.Sprintf("Issue %s: %s %s", nameParts[1], comments.Info.Fields.Summary, comments.Info.Fields.Status.Name)
 				} else {
-					result.Name = fmt.Sprintf("JiraIssue %d: %s", id, comments.Info.Fields.Summary)
+					result.Name = fmt.Sprintf("Issue %s: %s", nameParts[1], comments.Info.Fields.Summary)
 				}
 			}
 			result.Issue = &comments.Info
