@@ -246,7 +246,7 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 	if _, err := fmt.Fprintf(
 		w,
 		"Issue %s: %s\nDescription: %s \nStatus: %s\nResolution: %s\nPriority: %s\nCreator: %s\nAssigned To: %s\nLabels: %s\nTarget Version: %s\n---\n",
-		issue.Info.Key,
+		issue.Info.ID,
 		lineSafe(issue.Info.Fields.Summary),
 		lineSafe(issue.Info.Fields.Description),
 		statusFieldName(issue.Info.Fields.Status),
@@ -300,7 +300,7 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 }
 
 var (
-	reDiskCommentsLineHeader        = regexp.MustCompile(`^JiraIssue (\d+): (.*)$`)
+	reDiskCommentsLineHeader        = regexp.MustCompile(`^Issue (\d+): (.*)$`)
 	reDiskCommentsLineCommentHeader = regexp.MustCompile(`^Comment (\d+) by (.+) at (\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d\d\d\+\d\d\d\d)$`)
 )
 
