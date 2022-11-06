@@ -127,14 +127,13 @@ func (index *pathIndex) Load() error {
 			}
 			return err
 		}
+		if info.IsDir() {
+			return nil
+		}
 		if mustExpire && expiredAt.After(info.ModTime()) {
 			os.RemoveAll(path)
 			return nil
 		}
-		if info.IsDir() {
-			return nil
-		}
-
 		var indexName string
 		switch name := info.Name(); {
 		case strings.HasPrefix(name, "build-log.txt"):
