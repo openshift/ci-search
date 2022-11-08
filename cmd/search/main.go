@@ -338,7 +338,20 @@ func (o *options) MetadataFor(path string) (Result, error) {
 		copied.RawQuery = url.Values{"id": []string{strconv.Itoa(id)}}.Encode()
 		result.URI = &copied
 
-		if comments, ok := o.bugs.Get(id); ok {
+		var comments *bugzilla.BugComments
+		var ok bool
+		memCacheComments, ok := o.bugs.Get(id)
+		if ok {
+			comments = memCacheComments
+		} else {
+			diskCacheComments, err := bugzilla.ReadBugComments(fmt.Sprintf("%s/%s", o.bugsPath, path))
+			if err != nil {
+				ok = false
+			}
+			comments = diskCacheComments
+			ok = true
+		}
+		if ok {
 			// take the time of last bug update or comment, whichever is newer
 			if l := len(comments.Comments); l > 0 {
 				result.LastModified = comments.Comments[l-1].CreationTime.Time
@@ -386,7 +399,20 @@ func (o *options) MetadataFor(path string) (Result, error) {
 		copied.Path = fmt.Sprintf("%s/%s", "browse", nameParts[1])
 		result.URI = &copied
 
-		if comments, ok := o.issues.Get(id); ok {
+		var comments *jira.IssueComments
+		var ok bool
+		cacheComments, ok := o.issues.Get(id)
+		if ok {
+			comments = cacheComments
+		} else {
+			diskCacheComments, err := jira.ReadBugComments(fmt.Sprintf("%s/%s", o.issuesPath, path))
+			if err != nil {
+				ok = false
+			}
+			comments = diskCacheComments
+			ok = true
+		}
+		if ok {
 			// take the time of last issue update or comment, whichever is newer
 			if l := len(comments.Comments); l > 0 {
 				result.LastModified = jira.StringToTime(comments.Comments[l-1].Created)

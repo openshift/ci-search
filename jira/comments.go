@@ -5,6 +5,7 @@ import (
 	"k8s.io/klog"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,11 +84,13 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer) e
 			klog.Errorf("Unable to load initial comment state: %v", err)
 		}
 		for _, issue := range list {
-			s.store.Add(issue.DeepCopyObject())
+			// do not add closed issues to the in-mem cache
+			if !strings.EqualFold(issue.Info.Fields.Status.Name, "closed") {
+				s.store.Add(issue.DeepCopyObject())
+			}
 		}
 		klog.V(4).Infof("Loaded %d issues from disk", len(list))
 	}
-
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    s.issueAdd,
 		DeleteFunc: s.issueDelete,

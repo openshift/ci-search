@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,22 +87,13 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer) e
 			klog.Errorf("Unable to load initial comment state: %v", err)
 		}
 		for _, bug := range list {
-			s.store.Add(bug.DeepCopyObject())
+			// do not add closed bugs to the in-mem cache
+			if !strings.EqualFold(bug.Info.Status, "closed") {
+				s.store.Add(bug.DeepCopyObject())
+			}
 		}
 		klog.V(4).Infof("Loaded %d bugs from disk", len(list))
-
-		// wait for bug cache to fill, then prune the list
-		// done := ctx.Done()
-		// if !cache.WaitForCacheSync(done, informer.HasSynced) {
-		// 	return ctx.Err()
-		// }
-		// list, err = persisted.Sync(informer.GetStore().ListKeys())
-		// if err != nil {
-		// 	klog.Errorf("Unable to load initial comment state: %v", err)
-		// }
-		// klog.V(4).Infof("Prune disk to %d bugs", len(list))
 	}
-
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    s.bugAdd,
 		DeleteFunc: s.bugDelete,
