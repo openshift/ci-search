@@ -140,7 +140,7 @@ func (s *CommentDiskStore) Sync(keys []string) ([]*IssueComments, error) {
 			return nil
 		}
 
-		comments, err := readBugComments(path)
+		comments, err := ReadBugComments(path)
 		if err != nil {
 			return fmt.Errorf("unable to read %q: %v", path, err)
 		}
@@ -308,7 +308,7 @@ const (
 	issueCommentDelimiter = "\x1e"
 )
 
-func readBugComments(path string) (*IssueComments, error) {
+func ReadBugComments(path string) (*IssueComments, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

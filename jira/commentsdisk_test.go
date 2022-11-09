@@ -131,7 +131,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("\n%s", string(data))
-	actualComments, err := readBugComments(path)
+	actualComments, err := ReadBugComments(path)
 	if err != nil {
 		t.Fatal(err)
 	}
