@@ -1,10 +1,8 @@
 approvers:
-  - smarterclayton
   - wking
   - stevekuznetsov
-  - alvaroaleman
   - bradmwilliams
 reviewers:
-  - smarterclayton
   - wking
   - bradmwilliams
+  - hoxhaeris
