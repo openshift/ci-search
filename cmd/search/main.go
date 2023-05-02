@@ -483,6 +483,52 @@ func (o *options) MetadataFor(path string) (Result, error) {
 	}
 }
 
+const healthPort = 8081
+
+// Health keeps a request multiplexer for health liveness and readiness endpoints
+type Health struct {
+	healthMux *http.ServeMux
+}
+
+// NewHealth creates a new health request multiplexer and starts serving the liveness endpoint
+// on the default port
+func NewHealth() *Health {
+	return NewHealthOnPort(healthPort)
+}
+
+// NewHealth creates a new health request multiplexer and starts serving the liveness endpoint
+// on the given port
+func NewHealthOnPort(port int) *Health {
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "OK") })
+	server := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: healthMux}
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil {
+			return
+		}
+	}()
+	return &Health{
+		healthMux: healthMux,
+	}
+}
+
+type ReadinessCheck func() bool
+
+// ServeReady starts serving the readiness endpoint
+func (h *Health) ServeReady(readynessChecks ...ReadinessCheck) {
+	h.healthMux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) {
+		for _, readynessCheck := range readynessChecks {
+			if !readynessCheck() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, "ReadinessCheck failed")
+				return
+			}
+		}
+		fmt.Fprint(w, "OK")
+	})
+}
+
 func (o *options) Run() error {
 	jobURIPrefix, err := url.Parse(o.JobURIPrefix)
 	if err != nil {
@@ -502,7 +548,7 @@ func (o *options) Run() error {
 	}
 
 	o.jobsIndex = indexedPaths
-
+	var bzInformer cache.SharedIndexInformer
 	if len(o.BugzillaURL) > 0 {
 		url, err := url.Parse(o.BugzillaURL)
 		if err != nil {
@@ -528,7 +574,7 @@ func (o *options) Run() error {
 			klog.Exitf("Unable to build bugzilla client: %v", err)
 		}
 		c.Client = &http.Client{Transport: rt}
-		informer := bugzilla.NewInformer(
+		bzInformer = bugzilla.NewInformer(
 			c,
 			10*time.Minute,
 			8*time.Hour,
@@ -542,7 +588,7 @@ func (o *options) Run() error {
 				return !contains(info.Keywords, "Security")
 			},
 		)
-		lister := bugzilla.NewBugLister(informer.GetIndexer())
+		lister := bugzilla.NewBugLister(bzInformer.GetIndexer())
 		if err := os.MkdirAll(o.bugsPath, 0777); err != nil {
 			return fmt.Errorf("unable to create directory for artifact: %w", err)
 		}
@@ -552,8 +598,8 @@ func (o *options) Run() error {
 		o.bugs = store
 
 		ctx := context.Background()
-		go informer.Run(ctx.Done())
-		go store.Run(ctx, informer)
+		go bzInformer.Run(ctx.Done())
+		go store.Run(ctx, bzInformer)
 		go diskStore.Run(ctx, lister, store, o.NoIndex)
 		klog.Infof("Started indexing bugzilla %s with query %q", o.BugzillaURL, o.BugzillaSearch)
 	} else {
@@ -561,6 +607,7 @@ func (o *options) Run() error {
 	}
 
 	// jira
+	var jiraInformer cache.SharedIndexInformer
 	if len(o.JiraURL) > 0 {
 		jiraURL, err := url.Parse(o.JiraURL)
 		if err != nil {
@@ -587,7 +634,7 @@ func (o *options) Run() error {
 			Client: jc,
 		}
 
-		jiraInformer := jira.NewInformer(
+		jiraInformer = jira.NewInformer(
 			c,
 			10*time.Minute,
 			8*time.Hour,
@@ -616,7 +663,8 @@ func (o *options) Run() error {
 	} else {
 		o.issues = jira.NewCommentStore(nil, 0, nil)
 	}
-
+	var store *prow.DiskStore
+	var informer cache.SharedIndexInformer
 	if len(o.DeckURI) > 0 {
 		if o.MaxAge > 0 {
 			klog.Infof("Results expire after %s", o.MaxAge)
@@ -647,10 +695,10 @@ func (o *options) Run() error {
 				return prow.ReadFromIndex(ctx, gcsClient, o.IndexBucket, "job-state", o.MaxAge, *u)
 			})
 		}
-		informer := prow.NewInformer(2*time.Minute, 30*time.Minute, o.MaxAge, initialJobLister, c)
+		informer = prow.NewInformer(2*time.Minute, 30*time.Minute, o.MaxAge, initialJobLister, c)
 		lister := prow.NewLister(informer.GetIndexer())
 		o.jobAccessor = lister
-		store := prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
+		store = prow.NewDiskStore(gcsClient, o.jobsPath, o.MaxAge)
 
 		if err := os.MkdirAll(o.jobsPath, 0777); err != nil {
 			return fmt.Errorf("unable to create directory for artifact: %w", err)
@@ -715,7 +763,7 @@ func (o *options) Run() error {
 			handler = promhttp.InstrumentHandlerDuration(h.MustCurryWith(prometheus.Labels{"path": path}), handler)
 			mux.Handle(path, handler)
 		}
-
+		health := NewHealth()
 		mux.PathPrefix("/static/").Handler(static.Handler("/static/"))
 		handle("/graph/metrics", http.HandlerFunc(g.HandleGraph))
 		handle("/graph/api/metrics/job", http.HandlerFunc(g.HandleAPIJobGraph))
@@ -734,6 +782,18 @@ func (o *options) Run() error {
 				klog.Exitf("Server exited: %v", err)
 			}
 		}()
+		health.ServeReady(func() bool {
+			if !informer.HasSynced() || !jiraInformer.HasSynced() || !bzInformer.HasSynced() {
+				return false
+			}
+			// TODO - find a better way to check this
+			// if the disk cache is deleted, we want to build it first, before accepting traffic. The check value is not
+			// 0 since is expected for the queue to be constantly populated with new items.
+			if store.QueueLen() > 10000 {
+				return true
+			}
+			return false
+		})
 	}
 	select {}
 }
