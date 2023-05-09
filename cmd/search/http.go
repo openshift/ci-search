@@ -74,10 +74,6 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	var index *Index
 	var success bool
 	start := time.Now()
-	defer func() {
-		klog.Infof("Render index %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
-	}()
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		flusher = nopFlusher{}
@@ -227,7 +223,9 @@ func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
 	// perform a search
 	fmt.Fprintf(writer, `<div style="margin-top: 3rem; position: relative" class="pl-3">`)
 	flusher.Flush()
-
+	defer func() {
+		klog.Infof("Render index %s duration=%s success=%t", index.String(), time.Now().Sub(start).Truncate(time.Millisecond), success)
+	}()
 	switch {
 	case index.GroupByJob:
 		result, err := o.orderedSearchResults(req.Context(), index)

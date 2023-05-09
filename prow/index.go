@@ -111,12 +111,18 @@ func (s *DiskStore) Handler() cache.ResourceEventHandler {
 	}
 }
 
+func (s *DiskStore) QueueLen() int {
+	return s.queue.Len()
+}
+
 func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, disableWrite bool, workers int) {
 	for i := 0; i < workers; i++ {
 		go func(i int) {
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
 			wait.UntilWithContext(ctx, func(ctx context.Context) {
 				for {
+					// temporary log the queue length
+					klog.Infof("Prow queue length: %d", s.queue.Len())
 					obj, done := s.queue.Get()
 					if done {
 						return
