@@ -14,6 +14,7 @@ require (
 	github.com/golang/protobuf v1.5.3
 	github.com/gorilla/mux v1.8.0
 	github.com/jmoiron/sqlx v1.3.1
+	github.com/openshift/build-machinery-go v0.0.0-20230824093055-6a18da01283c
 	github.com/pkg/profile v1.5.0
 	github.com/prometheus/client_golang v1.13.0
 	github.com/spf13/cobra v1.7.0

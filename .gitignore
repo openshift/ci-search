@@ -3,3 +3,8 @@
 /build-indexer
 /search
 /search.db
+
+.scannerwork/
+coverage.out
+golangci-lint.out
+report.json
