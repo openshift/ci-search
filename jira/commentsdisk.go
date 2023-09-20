@@ -301,7 +301,7 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 
 var (
 	reDiskCommentsLineHeader        = regexp.MustCompile(`^Issue (\d+): (.*)$`)
-	reDiskCommentsLineCommentHeader = regexp.MustCompile(`^Comment (\d+) by (.+) at (\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d\d\d\+\d\d\d\d)$`)
+	reDiskCommentsLineCommentHeader = regexp.MustCompile(`^Comment (\d+) by (.+) at (\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d\d\d[+-]\d\d\d\d)$`)
 )
 
 const (

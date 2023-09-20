@@ -21,7 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	stdio "io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -83,8 +83,10 @@ type Client interface {
 	DeleteLink(id string) error
 	DeleteRemoteLink(issueID string, linkID int) error
 	// DeleteRemoteLinkViaURL identifies and removes a remote link from an issue
-	// the has the provided URL.
-	DeleteRemoteLinkViaURL(issueID, url string) error
+	// the has the provided URL. The returned bool indicates whether a change
+	// was made during the operation as a remote link with the URL not existing
+	// is not consider an error for this function.
+	DeleteRemoteLinkViaURL(issueID, url string) (bool, error)
 	ForPlugin(plugin string) Client
 	AddComment(issueID string, comment *jira.Comment) (*jira.Comment, error)
 	ListProjects() (*jira.ProjectList, error)
@@ -92,6 +94,7 @@ type Client interface {
 	JiraURL() string
 	Used() bool
 	WithFields(fields logrus.Fields) Client
+	GetProjectVersions(project string) ([]*jira.Version, error)
 }
 
 type BasicAuthGenerator func() (username, password string)
@@ -328,21 +331,23 @@ func (jc *client) DeleteRemoteLink(issueID string, linkID int) error {
 }
 
 // DeleteRemoteLinkViaURL identifies and removes a remote link from an issue
-// the has the provided URL.
-func DeleteRemoteLinkViaURL(jc Client, issueID, url string) error {
+// the has the provided URL. The returned bool indicates whether a change
+// was made during the operation as a remote link with the URL not existing
+// is not consider an error for this function.
+func DeleteRemoteLinkViaURL(jc Client, issueID, url string) (bool, error) {
 	links, err := jc.GetRemoteLinks(issueID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, link := range links {
 		if link.Object.URL == url {
-			return jc.DeleteRemoteLink(issueID, link.ID)
+			return true, jc.DeleteRemoteLink(issueID, link.ID)
 		}
 	}
-	return fmt.Errorf("could not find remote link on issue with URL `%s`", url)
+	return false, fmt.Errorf("could not find remote link on issue with URL `%s`", url)
 }
 
-func (jc *client) DeleteRemoteLinkViaURL(issueID, url string) error {
+func (jc *client) DeleteRemoteLinkViaURL(issueID, url string) (bool, error) {
 	return DeleteRemoteLinkViaURL(jc, issueID, url)
 }
 
@@ -514,7 +519,7 @@ func (jc *client) CloneIssue(parent *jira.Issue) (*jira.Issue, error) {
 
 func unsetProblematicFields(issue *jira.Issue, responseBody string) (*jira.Issue, error) {
 	// handle unsettable "unknown" fields
-	processedResponse := createIssueError{}
+	processedResponse := CreateIssueError{}
 	if newErr := json.Unmarshal([]byte(responseBody), &processedResponse); newErr != nil {
 		return nil, fmt.Errorf("Error processing jira error: %w", newErr)
 	}
@@ -531,6 +536,12 @@ func unsetProblematicFields(issue *jira.Issue, responseBody string) (*jira.Issue
 	for field := range processedResponse.Errors {
 		delete(fieldsMap, field)
 	}
+	// Remove null value "customfields_" because they cause the server to return: 500 Internal Server Error
+	for field, value := range fieldsMap {
+		if strings.HasPrefix(field, "customfield_") && value == nil {
+			delete(fieldsMap, field)
+		}
+	}
 	issueMap["fields"] = fieldsMap
 	// turn back into jira.Issue type
 	marshalledFixedIssue, err := json.Marshal(issueMap)
@@ -544,7 +555,7 @@ func unsetProblematicFields(issue *jira.Issue, responseBody string) (*jira.Issue
 	return &newIssue, nil
 }
 
-type createIssueError struct {
+type CreateIssueError struct {
 	ErrorMessages []string          `json:"errorMessages"`
 	Errors        map[string]string `json:"errors"`
 }
@@ -633,7 +644,7 @@ func (bart *basicAuthRoundtripper) RoundTrip(req *http.Request) (*http.Response,
 	return bart.upstream.RoundTrip(req2)
 }
 
-var knownAuthTypes = sets.NewString("bearer", "basic", "negotiate")
+var knownAuthTypes = sets.New[string]("bearer", "basic", "negotiate")
 
 // maskAuthorizationHeader masks credential content from authorization headers
 // See https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Authorization
@@ -703,7 +714,7 @@ func JiraErrorBody(err error) string {
 func HandleJiraError(response *jira.Response, err error) error {
 	if err != nil && strings.Contains(err.Error(), "Please analyze the request body for more details.") {
 		if response != nil && response.Response != nil {
-			body, readError := ioutil.ReadAll(response.Body)
+			body, readError := stdio.ReadAll(response.Body)
 			if readError != nil && readError.Error() != "http: read on closed response body" {
 				logrus.WithError(readError).Warn("Failed to read Jira response body.")
 			}
@@ -835,4 +846,21 @@ func GetIssueTargetVersion(issue *jira.Issue) (*[]*jira.Version, error) {
 
 func (jc *client) GetIssueTargetVersion(issue *jira.Issue) (*[]*jira.Version, error) {
 	return GetIssueTargetVersion(issue)
+}
+
+// GetProjectVersions returns the list of all the Versions defined in a Project
+func (jc *client) GetProjectVersions(project string) ([]*jira.Version, error) {
+	req, err := jc.upstream.NewRequest("GET", "rest/api/2/project/"+project+"/versions", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct request: %w", err)
+	}
+	versions := []*jira.Version{}
+	resp, err := jc.upstream.Do(req, &versions)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if err != nil {
+		return nil, HandleJiraError(resp, err)
+	}
+	return versions, nil
 }
