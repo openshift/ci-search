@@ -71,6 +71,11 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 }
 
 func (o *options) handleIndex(w http.ResponseWriter, req *http.Request) {
+	// Send an empty 204 No Content response with a keep-alive header
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Keep-Alive", "timeout=600") // Keep-alive for 600 seconds
+	w.WriteHeader(http.StatusNoContent)
+
 	var index *Index
 	var success bool
 	start := time.Now()
