@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/ci-search/testgrid/metadata/junit"
 	"github.com/openshift/ci-search/testgrid/util/gcs"

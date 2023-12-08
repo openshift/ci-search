@@ -3,7 +3,7 @@ package jira
 import (
 	"bytes"
 	"encoding/json"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"strconv"
 	"time"
 
@@ -188,4 +188,8 @@ func (b *IssueList) DeepCopyObject() runtime.Object {
 		}
 	}
 	return &copied
+}
+
+type CommentAccessor interface {
+	Get(id int) (*IssueComments, bool)
 }

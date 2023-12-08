@@ -1,8 +1,10 @@
 approvers:
-  - wking
-  - stevekuznetsov
-  - bradmwilliams
+- AlexNPavel
+- bradmwilliams
+- hoxhaeris
+- jupierce
 reviewers:
-  - wking
-  - bradmwilliams
-  - hoxhaeris
+- AlexNPavel
+- bradmwilliams
+- hoxhaeris
+- jupierce

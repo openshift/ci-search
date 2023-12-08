@@ -19,10 +19,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	p, err := plot.New()
-	if err != nil {
-		log.Fatal(err)
-	}
+	//TODO: The call to plot.New() changed since it was originally written and no longer returns an error...
+	p := plot.New()
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 
 	var read int
 	rows, err := db.Query("SELECT r.version, m.job_name, avg(m.value) as value FROM metric_value AS m, release_job as r, metric AS metric WHERE metric.id = m.metric_id AND metric.name == 'cluster:usage:cpu:total:rate' AND r.job_name = m.job_name AND r.job_id = m.job_id AND r.version LIKE '4.8.0-0.ci-%' AND r.type == 'target' GROUP BY r.version,m.job_name ORDER by r.version;")
@@ -48,7 +49,8 @@ func main() {
 	}
 
 	p.NominalX(xNames...)
-	p.Legend.XAlign = draw.XLeft
+	//TODO: The following line prevents successful compilation...
+	//p.Legend.XAlign = draw.XLeft
 	p.X.Tick.Label.Rotation = math.Pi / 4
 	p.X.Tick.Label.XAlign = draw.XRight
 

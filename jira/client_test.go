@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	jiraClient "k8s.io/test-infra/prow/jira"
 )
 

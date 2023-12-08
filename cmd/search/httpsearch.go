@@ -11,7 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/ci-search/pkg/httpwriter"
 )
@@ -190,7 +190,7 @@ type SearchBugResult struct {
 	Matches []Match
 }
 
-//jira
+// jira
 type SearchIssuesResult struct {
 	Name    string
 	Number  int
@@ -228,7 +228,7 @@ func (s *SearchResult) BugByNumber(num int) *SearchBugResult {
 	return &s.Bugs[i]
 }
 
-//jira
+// jira
 func (s *SearchResult) IssueByNumber(num int) *SearchIssuesResult {
 	i, ok := s.issueByNumber[num]
 	if ok {

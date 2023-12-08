@@ -11,7 +11,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/openshift/ci-search/pkg/httpwriter"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	_ "modernc.org/sqlite"
 )
 

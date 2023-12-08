@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // NewIssueLister lists issues out of a cache.
@@ -164,7 +164,7 @@ func (w *periodicWatcher) run() {
 	} else {
 		delay = w.interval
 	}
-	klog.V(6).Infof("Waiting for minimum interval %s", delay)
+	klog.V(5).Infof("Watcher will start in: %s", delay)
 	select {
 	case <-time.After(delay):
 	case <-w.done:
@@ -176,7 +176,7 @@ func (w *periodicWatcher) run() {
 		args.LastChangeTime = rv.Time
 		issues, err := w.lw.client.SearchIssues(context.Background(), args)
 		if err != nil {
-			klog.V(5).Infof("Search query error: %v", err)
+			klog.Errorf("Watcher search issues error: %v", err)
 			w.ch <- watch.Event{Type: watch.Error, Object: &errors.NewInternalError(err).ErrStatus}
 			w.stop()
 			return
@@ -198,7 +198,7 @@ func (w *periodicWatcher) run() {
 
 		klog.V(5).Infof("Watch observed %d issues with a change time since %s", len(list.Items), timeToRV(rv))
 
-		// sort the list from oldest change to newest change
+		// sort the list from the oldest change to the newest change
 		sort.Slice(list.Items, func(i, j int) bool {
 			a, b := time.Time(list.Items[i].Info.Fields.Updated), time.Time(list.Items[j].Info.Fields.Updated)
 			return !a.After(b)

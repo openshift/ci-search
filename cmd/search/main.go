@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"net/http"
 	_ "net/http/pprof"
@@ -28,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	jiraClient "k8s.io/test-infra/prow/jira"
 
 	"github.com/openshift/ci-search/bugzilla"
@@ -496,7 +495,7 @@ func NewHealth() *Health {
 	return NewHealthOnPort(healthPort)
 }
 
-// NewHealth creates a new health request multiplexer and starts serving the liveness endpoint
+// NewHealthOnPort creates a new health request multiplexer and starts serving the liveness endpoint
 // on the given port
 func NewHealthOnPort(port int) *Health {
 	healthMux := http.NewServeMux()
@@ -562,7 +561,7 @@ func (o *options) Run() error {
 		if len(o.BugzillaSearch) == 0 {
 			klog.Exitf("--bugzilla-search is required")
 		}
-		tokenData, err := ioutil.ReadFile(o.BugzillaTokenPath)
+		tokenData, err := os.ReadFile(o.BugzillaTokenPath)
 		if err != nil {
 			klog.Exitf("Failed to load --bugzilla-token-file: %v", err)
 		}
@@ -620,7 +619,7 @@ func (o *options) Run() error {
 		if len(o.JiraSearch) == 0 {
 			klog.Exitf("--jira-search is required")
 		}
-		tokenData, err := ioutil.ReadFile(o.JiraTokenPath)
+		tokenData, err := os.ReadFile(o.JiraTokenPath)
 		if err != nil {
 			klog.Exitf("Failed to load --jira-token-file: %v", err)
 		}
@@ -633,7 +632,6 @@ func (o *options) Run() error {
 		c := &jira.Client{
 			Client: jc,
 		}
-
 		jiraInformer = jira.NewInformer(
 			c,
 			10*time.Minute,
@@ -650,6 +648,7 @@ func (o *options) Run() error {
 		if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
 			return fmt.Errorf("unable to create directory for artifact: %w", err)
 		}
+
 		jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
 		jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
 

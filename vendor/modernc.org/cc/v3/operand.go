@@ -37,6 +37,7 @@ type Operand interface {
 	IsAssingmentCompatible(lhs Type) bool
 	ConvertTo(Type) Operand
 	Declarator() *Declarator
+	IsConst() bool
 	IsLValue() bool
 	IsNonZero() bool
 	IsZero() bool
@@ -46,13 +47,15 @@ type Operand interface {
 	convertFromInt(*context, Node, Type) Operand
 	convertTo(*context, Node, Type) Operand
 	convertToInt(*context, Node, Type) Operand
-	integerPromotion(*context, Node) Operand
-	isConst() bool
-	normalize(*context, Node) Operand
 	getABI() *ABI
+	integerPromotion(*context, Node) Operand
+	normalize(*context, Node) Operand
 }
 
 type Value interface {
+	IsConst() bool
+	IsNonZero() bool
+	IsZero() bool
 	add(b Value) Value
 	and(b Value) Value
 	cpl() Value
@@ -60,8 +63,6 @@ type Value interface {
 	eq(b Value) Value
 	ge(b Value) Value
 	gt(b Value) Value
-	isNonZero() bool
-	isZero() bool
 	le(b Value) Value
 	lsh(b Value) Value
 	lt(b Value) Value
@@ -82,8 +83,9 @@ func (v WideStringValue) and(b Value) Value { panic(todo("")) }
 func (v WideStringValue) cpl() Value        { panic(todo("")) }
 func (v WideStringValue) div(b Value) Value { panic(todo("")) }
 func (v WideStringValue) eq(b Value) Value  { return boolValue(v == b.(WideStringValue)) }
-func (v WideStringValue) isNonZero() bool   { return true }
-func (v WideStringValue) isZero() bool      { return false }
+func (v WideStringValue) IsConst() bool     { return true }
+func (v WideStringValue) IsNonZero() bool   { return true }
+func (v WideStringValue) IsZero() bool      { return false }
 func (v WideStringValue) lsh(b Value) Value { panic(todo("")) }
 func (v WideStringValue) mod(b Value) Value { panic(todo("")) }
 func (v WideStringValue) mul(b Value) Value { panic(todo("")) }
@@ -117,8 +119,9 @@ func (v StringValue) and(b Value) Value { panic(todo("")) }
 func (v StringValue) cpl() Value        { panic(todo("")) }
 func (v StringValue) div(b Value) Value { panic(todo("")) }
 func (v StringValue) eq(b Value) Value  { return boolValue(v == b.(StringValue)) }
-func (v StringValue) isNonZero() bool   { return true }
-func (v StringValue) isZero() bool      { return false }
+func (v StringValue) IsConst() bool     { return true }
+func (v StringValue) IsNonZero() bool   { return true }
+func (v StringValue) IsZero() bool      { return false }
 func (v StringValue) lsh(b Value) Value { panic(todo("")) }
 func (v StringValue) mod(b Value) Value { panic(todo("")) }
 func (v StringValue) mul(b Value) Value { panic(todo("")) }
@@ -153,8 +156,9 @@ func (v Int64Value) cpl() Value        { return ^v }
 func (v Int64Value) eq(b Value) Value  { return boolValue(v == b.(Int64Value)) }
 func (v Int64Value) ge(b Value) Value  { return boolValue(v >= b.(Int64Value)) }
 func (v Int64Value) gt(b Value) Value  { return boolValue(v > b.(Int64Value)) }
-func (v Int64Value) isNonZero() bool   { return v != 0 }
-func (v Int64Value) isZero() bool      { return v == 0 }
+func (v Int64Value) IsConst() bool     { return true }
+func (v Int64Value) IsNonZero() bool   { return v != 0 }
+func (v Int64Value) IsZero() bool      { return v == 0 }
 func (v Int64Value) le(b Value) Value  { return boolValue(v <= b.(Int64Value)) }
 func (v Int64Value) lt(b Value) Value  { return boolValue(v < b.(Int64Value)) }
 func (v Int64Value) mul(b Value) Value { return v * b.(Int64Value) }
@@ -165,7 +169,7 @@ func (v Int64Value) sub(b Value) Value { return v - b.(Int64Value) }
 func (v Int64Value) xor(b Value) Value { return v ^ b.(Int64Value) }
 
 func (v Int64Value) div(b Value) Value {
-	if b.isZero() {
+	if b.IsZero() {
 		return nil
 	}
 
@@ -195,7 +199,7 @@ func (v Int64Value) rsh(b Value) Value {
 }
 
 func (v Int64Value) mod(b Value) Value {
-	if b.isZero() {
+	if b.IsZero() {
 		return nil
 	}
 
@@ -210,8 +214,9 @@ func (v Uint64Value) cpl() Value        { return ^v }
 func (v Uint64Value) eq(b Value) Value  { return boolValue(v == b.(Uint64Value)) }
 func (v Uint64Value) ge(b Value) Value  { return boolValue(v >= b.(Uint64Value)) }
 func (v Uint64Value) gt(b Value) Value  { return boolValue(v > b.(Uint64Value)) }
-func (v Uint64Value) isNonZero() bool   { return v != 0 }
-func (v Uint64Value) isZero() bool      { return v == 0 }
+func (v Uint64Value) IsConst() bool     { return true }
+func (v Uint64Value) IsNonZero() bool   { return v != 0 }
+func (v Uint64Value) IsZero() bool      { return v == 0 }
 func (v Uint64Value) le(b Value) Value  { return boolValue(v <= b.(Uint64Value)) }
 func (v Uint64Value) lt(b Value) Value  { return boolValue(v < b.(Uint64Value)) }
 func (v Uint64Value) mul(b Value) Value { return v * b.(Uint64Value) }
@@ -222,7 +227,7 @@ func (v Uint64Value) sub(b Value) Value { return v - b.(Uint64Value) }
 func (v Uint64Value) xor(b Value) Value { return v ^ b.(Uint64Value) }
 
 func (v Uint64Value) div(b Value) Value {
-	if b.isZero() {
+	if b.IsZero() {
 		return nil
 	}
 
@@ -252,7 +257,7 @@ func (v Uint64Value) rsh(b Value) Value {
 }
 
 func (v Uint64Value) mod(b Value) Value {
-	if b.isZero() {
+	if b.IsZero() {
 		return nil
 	}
 
@@ -268,8 +273,9 @@ func (v Float32Value) div(b Value) Value { return v / b.(Float32Value) }
 func (v Float32Value) eq(b Value) Value  { return boolValue(v == b.(Float32Value)) }
 func (v Float32Value) ge(b Value) Value  { return boolValue(v >= b.(Float32Value)) }
 func (v Float32Value) gt(b Value) Value  { return boolValue(v > b.(Float32Value)) }
-func (v Float32Value) isNonZero() bool   { return v != 0 }
-func (v Float32Value) isZero() bool      { return v == 0 }
+func (v Float32Value) IsConst() bool     { return true }
+func (v Float32Value) IsNonZero() bool   { return v != 0 }
+func (v Float32Value) IsZero() bool      { return !math.Signbit(float64(v)) && v == 0 }
 func (v Float32Value) le(b Value) Value  { return boolValue(v <= b.(Float32Value)) }
 func (v Float32Value) lsh(b Value) Value { panic(todo("")) }
 func (v Float32Value) lt(b Value) Value  { return boolValue(v < b.(Float32Value)) }
@@ -291,8 +297,9 @@ func (v Float64Value) div(b Value) Value { return v / b.(Float64Value) }
 func (v Float64Value) eq(b Value) Value  { return boolValue(v == b.(Float64Value)) }
 func (v Float64Value) ge(b Value) Value  { return boolValue(v >= b.(Float64Value)) }
 func (v Float64Value) gt(b Value) Value  { return boolValue(v > b.(Float64Value)) }
-func (v Float64Value) isNonZero() bool   { return v != 0 }
-func (v Float64Value) isZero() bool      { return v == 0 }
+func (v Float64Value) IsConst() bool     { return true }
+func (v Float64Value) IsNonZero() bool   { return v != 0 }
+func (v Float64Value) IsZero() bool      { return !math.Signbit(float64(v)) && v == 0 }
 func (v Float64Value) le(b Value) Value  { return boolValue(v <= b.(Float64Value)) }
 func (v Float64Value) lsh(b Value) Value { panic(todo("")) }
 func (v Float64Value) lt(b Value) Value  { return boolValue(v < b.(Float64Value)) }
@@ -319,8 +326,9 @@ func (v *Float128Value) div(b Value) Value { return v.safe(b, func(x, y *big.Flo
 func (v *Float128Value) eq(b Value) Value  { panic(todo("")) }
 func (v *Float128Value) ge(b Value) Value  { panic(todo("")) }
 func (v *Float128Value) gt(b Value) Value  { return boolValue(v.cmp(b, -1, 0)) }
-func (v *Float128Value) isNonZero() bool   { panic(todo("")) }
-func (v *Float128Value) isZero() bool      { return v.cmp(float128Zero, 0) }
+func (v *Float128Value) IsNonZero() bool   { panic(todo("")) }
+func (v *Float128Value) IsConst() bool     { return true }
+func (v *Float128Value) IsZero() bool      { return !v.NaN && !v.N.Signbit() && v.cmp(float128Zero, 0) }
 func (v *Float128Value) le(b Value) Value  { panic(todo("")) }
 func (v *Float128Value) lsh(b Value) Value { panic(todo("")) }
 func (v *Float128Value) lt(b Value) Value  { panic(todo("")) }
@@ -401,8 +409,9 @@ func (v Complex64Value) div(b Value) Value { return v / b.(Complex64Value) }
 func (v Complex64Value) eq(b Value) Value  { return boolValue(v == b.(Complex64Value)) }
 func (v Complex64Value) ge(b Value) Value  { panic(todo("")) }
 func (v Complex64Value) gt(b Value) Value  { panic(todo("")) }
-func (v Complex64Value) isNonZero() bool   { return v != 0 }
-func (v Complex64Value) isZero() bool      { return v == 0 }
+func (v Complex64Value) IsConst() bool     { return true }
+func (v Complex64Value) IsNonZero() bool   { return v != 0 }
+func (v Complex64Value) IsZero() bool      { return v == 0 }
 func (v Complex64Value) le(b Value) Value  { panic(todo("")) }
 func (v Complex64Value) lsh(b Value) Value { panic(todo("")) }
 func (v Complex64Value) lt(b Value) Value  { panic(todo("")) }
@@ -424,8 +433,9 @@ func (v Complex128Value) div(b Value) Value { return v / b.(Complex128Value) }
 func (v Complex128Value) eq(b Value) Value  { return boolValue(v == b.(Complex128Value)) }
 func (v Complex128Value) ge(b Value) Value  { panic(todo("")) }
 func (v Complex128Value) gt(b Value) Value  { panic(todo("")) }
-func (v Complex128Value) isNonZero() bool   { return v != 0 }
-func (v Complex128Value) isZero() bool      { return v == 0 }
+func (v Complex128Value) IsConst() bool     { return true }
+func (v Complex128Value) IsNonZero() bool   { return v != 0 }
+func (v Complex128Value) IsZero() bool      { return v == 0 }
 func (v Complex128Value) le(b Value) Value  { panic(todo("")) }
 func (v Complex128Value) lsh(b Value) Value { panic(todo("")) }
 func (v Complex128Value) lt(b Value) Value  { panic(todo("")) }
@@ -453,8 +463,9 @@ func (v Complex256Value) div(b Value) Value { panic(todo("")) }
 func (v Complex256Value) eq(b Value) Value  { panic(todo("")) }
 func (v Complex256Value) ge(b Value) Value  { panic(todo("")) }
 func (v Complex256Value) gt(b Value) Value  { panic(todo("")) }
-func (v Complex256Value) isNonZero() bool   { panic(todo("")) }
-func (v Complex256Value) isZero() bool      { return v.Re.isZero() && v.Im.isZero() }
+func (v Complex256Value) IsConst() bool     { return true }
+func (v Complex256Value) IsNonZero() bool   { panic(todo("")) }
+func (v Complex256Value) IsZero() bool      { return v.Re.IsZero() && v.Im.IsZero() }
 func (v Complex256Value) le(b Value) Value  { panic(todo("")) }
 func (v Complex256Value) lsh(b Value) Value { panic(todo("")) }
 func (v Complex256Value) lt(b Value) Value  { panic(todo("")) }
@@ -476,9 +487,9 @@ func (o *lvalue) ConvertTo(to Type) (r Operand) { return o.convertTo(nil, nil, t
 func (o *lvalue) Declarator() *Declarator       { return o.declarator }
 func (o *lvalue) IsLValue() bool                { return true }
 
-func (o *lvalue) isConst() bool {
-	if o.Value() != nil {
-		return true
+func (o *lvalue) IsConst() bool {
+	if v := o.Value(); v != nil {
+		return v.IsConst()
 	}
 
 	d := o.Declarator()
@@ -497,7 +508,7 @@ type funcDesignator struct {
 func (o *funcDesignator) ConvertTo(to Type) (r Operand) { return o.convertTo(nil, nil, to) }
 func (o *funcDesignator) Declarator() *Declarator       { return o.declarator }
 func (o *funcDesignator) IsLValue() bool                { return false }
-func (o *funcDesignator) isConst() bool                 { return true }
+func (o *funcDesignator) IsConst() bool                 { return true }
 
 func (o *funcDesignator) convertTo(ctx *context, n Node, to Type) (r Operand) {
 	return &lvalue{Operand: o.Operand.convertTo(ctx, n, to), declarator: o.declarator}
@@ -514,8 +525,8 @@ func (o *operand) ConvertTo(to Type) (r Operand) { return o.convertTo(nil, nil, 
 func (o *operand) Declarator() *Declarator       { return nil }
 func (o *operand) Offset() uintptr               { return o.offset }
 func (o *operand) IsLValue() bool                { return false }
-func (o *operand) IsNonZero() bool               { return o.value != nil && o.value.isNonZero() }
-func (o *operand) IsZero() bool                  { return o.value != nil && o.value.isZero() }
+func (o *operand) IsNonZero() bool               { return o.value != nil && o.value.IsNonZero() }
+func (o *operand) IsZero() bool                  { return o.value != nil && o.value.IsZero() }
 func (o *operand) Type() Type                    { return o.typ }
 func (o *operand) Value() Value                  { return o.value }
 func (o *operand) getABI() *ABI                  { return o.abi }
@@ -523,9 +534,9 @@ func (o *operand) getABI() *ABI                  { return o.abi }
 // IsAssingmentCompatible implements Operand.
 func (o *operand) IsAssingmentCompatible(lhs Type) bool { return lhs.isAssingmentCompatibleOperand(o) }
 
-func (o *operand) isConst() bool {
-	if o.Value() != nil {
-		return true
+func (o *operand) IsConst() bool {
+	if v := o.Value(); v != nil {
+		return v.IsConst()
 	}
 
 	d := o.Declarator()
@@ -543,7 +554,7 @@ func (o *operand) isConst() bool {
 // result, whose type domain is the type domain of the operands if they are the
 // same, and complex otherwise. This pattern is called the usual arithmetic
 // conversions:
-func usualArithmeticConversions(ctx *context, n Node, a, b Operand) (Operand, Operand) {
+func usualArithmeticConversions(ctx *context, n Node, a, b Operand, normalize bool) (Operand, Operand) {
 	if a.Type().Kind() == Invalid || b.Type().Kind() == Invalid {
 		return noOperand, noOperand
 	}
@@ -567,8 +578,10 @@ func usualArithmeticConversions(ctx *context, n Node, a, b Operand) (Operand, Op
 		return a, b
 	}
 
-	a = a.normalize(ctx, n)
-	b = b.normalize(ctx, n)
+	if normalize {
+		a = a.normalize(ctx, n)
+		b = b.normalize(ctx, n)
+	}
 	if a == noOperand || b == noOperand {
 		return noOperand, noOperand
 	}
@@ -662,7 +675,7 @@ func usualArithmeticConversions(ctx *context, n Node, a, b Operand) (Operand, Op
 			return a, b.convertTo(ctx, n, a.Type())
 		}
 	default:
-		panic(fmt.Errorf("TODO %v %v", a, b))
+		panic(fmt.Errorf("TODO %v %v", a.Type(), b.Type()))
 	}
 
 	// Otherwise, if the type of the operand with signed integer type can
@@ -1266,48 +1279,57 @@ type InitializerValue struct {
 	initializer initializer
 }
 
-func (v *InitializerValue) IsConst() bool        { return v.initializer.IsConst() }
-func (v *InitializerValue) List() []*Initializer { return v.initializer.List() }
-func (v *InitializerValue) Type() Type           { return v.typ }
-func (v *InitializerValue) add(b Value) Value    { return nil }
-func (v *InitializerValue) and(b Value) Value    { return nil }
-func (v *InitializerValue) cpl() Value           { return nil }
-func (v *InitializerValue) div(b Value) Value    { return nil }
-func (v *InitializerValue) eq(b Value) Value     { return nil }
-func (v *InitializerValue) ge(b Value) Value     { return nil }
-func (v *InitializerValue) gt(b Value) Value     { return nil }
-func (v *InitializerValue) le(b Value) Value     { return nil }
-func (v *InitializerValue) lsh(b Value) Value    { return nil }
-func (v *InitializerValue) lt(b Value) Value     { return nil }
-func (v *InitializerValue) mod(b Value) Value    { return nil }
-func (v *InitializerValue) mul(b Value) Value    { return nil }
-func (v *InitializerValue) neg() Value           { return nil }
-func (v *InitializerValue) neq(b Value) Value    { return nil }
-func (v *InitializerValue) or(b Value) Value     { return nil }
-func (v *InitializerValue) rsh(b Value) Value    { return nil }
-func (v *InitializerValue) sub(b Value) Value    { return nil }
-func (v *InitializerValue) xor(b Value) Value    { return nil }
+func (v *InitializerValue) List() []*Initializer {
+	if v == nil || v.initializer == nil {
+		return nil
+	}
 
-func (v *InitializerValue) isNonZero() bool {
+	return v.initializer.List()
+}
+
+func (v *InitializerValue) IsConst() bool {
+	return v != nil && v.initializer != nil && v.initializer.IsConst()
+}
+func (v *InitializerValue) Type() Type        { return v.typ }
+func (v *InitializerValue) add(b Value) Value { return nil }
+func (v *InitializerValue) and(b Value) Value { return nil }
+func (v *InitializerValue) cpl() Value        { return nil }
+func (v *InitializerValue) div(b Value) Value { return nil }
+func (v *InitializerValue) eq(b Value) Value  { return nil }
+func (v *InitializerValue) ge(b Value) Value  { return nil }
+func (v *InitializerValue) gt(b Value) Value  { return nil }
+func (v *InitializerValue) le(b Value) Value  { return nil }
+func (v *InitializerValue) lsh(b Value) Value { return nil }
+func (v *InitializerValue) lt(b Value) Value  { return nil }
+func (v *InitializerValue) mod(b Value) Value { return nil }
+func (v *InitializerValue) mul(b Value) Value { return nil }
+func (v *InitializerValue) neg() Value        { return nil }
+func (v *InitializerValue) neq(b Value) Value { return nil }
+func (v *InitializerValue) or(b Value) Value  { return nil }
+func (v *InitializerValue) rsh(b Value) Value { return nil }
+func (v *InitializerValue) sub(b Value) Value { return nil }
+func (v *InitializerValue) xor(b Value) Value { return nil }
+
+func (v *InitializerValue) IsNonZero() bool {
 	if v == nil {
 		return false
 	}
 
 	for _, v := range v.List() {
-		if v.AssignmentExpression.Operand.IsNonZero() {
+		if !v.AssignmentExpression.Operand.IsZero() {
 			return true
 		}
 	}
 	return false
 }
 
-func (v *InitializerValue) isZero() bool {
+func (v *InitializerValue) IsZero() bool {
 	if v == nil {
 		return false
 	}
 
 	for _, v := range v.List() {
-		if v.AssignmentExpression.Operand.IsNonZero() {
+		if !v.AssignmentExpression.Operand.IsZero() {
 			return false
 		}
 	}

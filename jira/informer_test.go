@@ -10,7 +10,7 @@ import (
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	jiraClient "k8s.io/test-infra/prow/jira"
 )
 

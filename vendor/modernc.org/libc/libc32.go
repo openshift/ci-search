@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build 386 || arm
 // +build 386 arm
 
 package libc // import "modernc.org/libc"
+
+const (
+	heapSize = 1 << 30 // Adjust for your debugging session requirements and system RAM size.
+)
 
 type (
 	// RawMem represents the biggest byte array the runtime can handle

@@ -7,12 +7,14 @@ package cc // import "modernc.org/cc/v3"
 import (
 	"bytes"
 	"fmt"
+	gotoken "go/token"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"modernc.org/token"
@@ -28,6 +30,7 @@ var (
 
 	idCOUNTER                  = dict.sid("__COUNTER__")
 	idCxLimitedRange           = dict.sid("CX_LIMITED_RANGE")
+	idDATE                     = dict.sid("__DATE__")
 	idDefault                  = dict.sid("DEFAULT")
 	idDefined                  = dict.sid("defined")
 	idEmptyString              = dict.sid(`""`)
@@ -46,6 +49,7 @@ var (
 	idOne                      = dict.sid("1")
 	idPragmaSTDC               = dict.sid("__pragma_stdc")
 	idSTDC                     = dict.sid("STDC")
+	idTIME                     = dict.sid("__TIME__")
 	idTclDefaultDoubleRounding = dict.sid("TCL_DEFAULT_DOUBLE_ROUNDING")
 	idTclIeeeDoubleRounding    = dict.sid("TCL_IEEE_DOUBLE_ROUNDING")
 	idVaArgs                   = dict.sid("__VA_ARGS__")
@@ -54,7 +58,6 @@ var (
 	cppTokensPool = sync.Pool{New: func() interface{} { r := []cppToken{}; return &r }}
 
 	protectedMacros = hideSet{ // [0], 6.10.8, 4
-		dict.sid("__DATE__"):                 {},
 		dict.sid("__STDC_HOSTED__"):          {},
 		dict.sid("__STDC_IEC_559_COMPLEX__"): {},
 		dict.sid("__STDC_IEC_559__"):         {},
@@ -62,10 +65,11 @@ var (
 		dict.sid("__STDC_MB_MIGHT_NEQ_WC__"): {},
 		dict.sid("__STDC_VERSION__"):         {},
 		dict.sid("__STDC__"):                 {},
-		dict.sid("__TIME__"):                 {},
 		idCOUNTER:                            {},
+		idDATE:                               {},
 		idFILE:                               {},
 		idLINE:                               {},
+		idTIME:                               {},
 	}
 )
 
@@ -137,6 +141,15 @@ func cppToksStr(toks []cppToken, sep string) string {
 		b.WriteString(v.String())
 	}
 	return b.String()
+}
+
+func cppToksStr2(toks [][]cppToken) string {
+	panic(todo(""))
+	var a []string
+	for _, v := range toks {
+		a = append(a, fmt.Sprintf("%q", cppToksStr(v, "|")))
+	}
+	return fmt.Sprint(a)
 }
 
 type cppReader struct {
@@ -263,6 +276,10 @@ func (m *Macro) param2(varArgs []cppToken, ap [][]cppToken, nm StringID, out *[]
 }
 
 func (m *Macro) param(varArgs []cppToken, ap [][]cppToken, nm StringID, out *[]cppToken) bool {
+	// trc("select (A) varArgs %q, ap %v, nm %q, out %q", cppToksStr(varArgs, "|"), cppToksStr2(ap), nm, cppToksStr(*out, "|"))
+	// defer func() {
+	// 	trc("select (A) varArgs %q, ap %v, nm %q, out %q", cppToksStr(varArgs, "|"), cppToksStr2(ap), nm, cppToksStr(*out, "|"))
+	// }()
 	return m.param2(varArgs, ap, nm, out, nil)
 }
 
@@ -272,6 +289,7 @@ type cpp struct {
 	counter      int
 	counterMacro Macro
 	ctx          *context
+	dateMacro    Macro
 	file         *tokenFile
 	fileMacro    Macro
 	in           chan []token3
@@ -282,7 +300,9 @@ type cpp struct {
 	macros       map[StringID]*Macro
 	out          chan *[]token4
 	outBuf       *[]token4
+	pragmaOpBuf  []token4
 	rq           chan struct{}
+	timeMacro    Macro
 	ungetBuf
 
 	last rune
@@ -290,6 +310,7 @@ type cpp struct {
 	intmaxChecked bool
 	nonFirstRead  bool
 	seenEOF       bool
+	inPragmaOp    bool
 }
 
 func newCPP(ctx *context) *cpp {
@@ -302,13 +323,27 @@ func newCPP(ctx *context) *cpp {
 		outBuf:     b,
 	}
 	r.counterMacro = Macro{repl: []token3{{char: PPNUMBER}}}
+	r.dateMacro = Macro{repl: []token3{{char: STRINGLITERAL}}}
+	r.timeMacro = Macro{repl: []token3{{char: STRINGLITERAL}}}
 	r.fileMacro = Macro{repl: []token3{{char: STRINGLITERAL}}}
 	r.lineMacro = Macro{repl: []token3{{char: PPNUMBER}}}
 	r.macros = map[StringID]*Macro{
 		idCOUNTER: &r.counterMacro,
+		idDATE:    &r.dateMacro,
 		idFILE:    &r.fileMacro,
 		idLINE:    &r.lineMacro,
+		idTIME:    &r.timeMacro,
 	}
+	t := time.Now()
+	// This macro expands to a string constant that describes the date on which the
+	// preprocessor is being run. The string constant contains eleven characters
+	// and looks like "Feb 12 1996". If the day of the month is less than 10, it is
+	// padded with a space on the left.
+	r.dateMacro.repl[0].value = dict.sid(t.Format("\"Jan _2 2006\""))
+	// This macro expands to a string constant that describes the time at which the
+	// preprocessor is being run. The string constant contains eight characters and
+	// looks like "23:59:01".
+	r.timeMacro.repl[0].value = dict.sid(t.Format("\"15:04:05\""))
 	return r
 }
 
@@ -388,87 +423,72 @@ func (c *cpp) write(tok cppToken) {
 
 	//dbg("%T.write %q", c, tok)
 	c.last = tok.char
-	*c.outBuf = append(*c.outBuf, tok.token4)
-	if tok.char == '\n' {
-		for i, tok := range *c.outBuf {
-			if tok.char != ' ' {
-				if tok.char == IDENTIFIER && tok.value == idPragmaOp {
-					toks := (*c.outBuf)[i:]
-					b := token4Pool.Get().(*[]token4)
-					*b = (*b)[:0]
-					c.outBuf = b
-					c.pragmaOp(toks)
-					return
-				}
-
+	switch {
+	case c.inPragmaOp:
+	out:
+		switch tok.char {
+		case ')':
+			c.inPragmaOp = false
+			b := c.pragmaOpBuf
+			if len(b) == 0 || b[0].char != '(' {
+				c.err(b[0], "expected (")
 				break
 			}
-		}
-		c.out <- c.outBuf
-		b := token4Pool.Get().(*[]token4)
-		*b = (*b)[:0]
-		c.outBuf = b
-	}
-}
 
-func (c *cpp) pragmaOp(toks []token4) {
-	var a []string
-loop:
-	for {
-		tok := toks[0]
-		toks = toks[1:] // Skip "_Pragma"
-		toks = ltrim4(toks)
-		if len(toks) == 0 || toks[0].char != '(' {
-			c.err(tok, "expected (")
-			break loop
-		}
+			var a []string
+			for _, v := range b[1:] {
+				if v.char != STRINGLITERAL {
+					c.err(v, "expected string literal")
+					break out
+				}
 
-		tok = toks[0]
-		toks = toks[1:] // Skip '('
-		toks = ltrim4(toks)
-		if len(toks) == 0 || (toks[0].char != STRINGLITERAL && toks[0].char != LONGSTRINGLITERAL) {
-			c.err(toks[0], "expected string literal")
-			break loop
-		}
+				a = append(a, v.String())
+			}
 
-		tok = toks[0]
-		a = append(a, tok.String())
-		toks = toks[1:] // Skip string literal
-		toks = ltrim4(toks)
-		if len(toks) == 0 || toks[0].char != ')' {
-			c.err(toks[0], "expected )")
-			break loop
-		}
+			if len(a) == 0 {
+				break
+			}
 
-		toks = toks[1:] // Skip ')'
-		toks = ltrim4(toks)
-		if len(toks) == 0 {
-			break loop
-		}
-
-		switch tok := toks[0]; {
-		case tok.char == '\n':
-			break loop
-		case tok.char == IDENTIFIER && tok.value == idPragmaOp:
-			// ok
+			for i, v := range a {
+				// [0], 6.10.9, 1
+				if v[0] == 'L' {
+					v = v[1:]
+				}
+				v = v[1 : len(v)-1]
+				v = strings.ReplaceAll(v, `\"`, `"`)
+				a[i] = "#pragma " + strings.ReplaceAll(v, `\\`, `\`) + "\n"
+			}
+			src := strings.Join(a, "")
+			s := newScanner0(c.ctx, strings.NewReader(src), tokenNewFile("", len(src)), 4096)
+			if ppf := s.translationPhase3(); ppf != nil {
+				ppf.translationPhase4(c)
+			}
 		default:
-			c.err(tok, "expected new-line")
-			break loop
+			c.pragmaOpBuf = append(c.pragmaOpBuf, tok.token4)
 		}
-	}
-	for i, v := range a {
-		// [0], 6.10.9, 1
-		if v[0] == 'L' {
-			v = v[1:]
+	default:
+		switch {
+		case tok.char == '\n':
+			*c.outBuf = append(*c.outBuf, tok.token4)
+			c.out <- c.outBuf
+			b := token4Pool.Get().(*[]token4)
+			*b = (*b)[:0]
+			c.outBuf = b
+		case tok.char == IDENTIFIER && tok.value == idPragmaOp:
+			if len(*c.outBuf) != 0 {
+				tok.char = '\n'
+				tok.value = 0
+				*c.outBuf = append(*c.outBuf, tok.token4)
+				c.out <- c.outBuf
+				b := token4Pool.Get().(*[]token4)
+				*b = (*b)[:0]
+				c.outBuf = b
+			}
+			c.inPragmaOp = true
+			c.pragmaOpBuf = c.pragmaOpBuf[:0]
+		default:
+			*c.outBuf = append(*c.outBuf, tok.token4)
 		}
-		v = v[1 : len(v)-1]
-		v = strings.ReplaceAll(v, `\"`, `"`)
-		a[i] = "#pragma " + strings.ReplaceAll(v, `\\`, `\`) + "\n"
-	}
-	src := strings.Join(a, "")
-	s := newScanner0(c.ctx, strings.NewReader(src), tokenNewFile("", len(src)), 4096)
-	if ppf := s.translationPhase3(); ppf != nil {
-		ppf.translationPhase4(c)
 	}
 }
 
@@ -511,7 +531,7 @@ func (c *cpp) writes(toks []cppToken) {
 // 	return T^HS • expand(TS’);
 // }
 func (c *cpp) expand(ts tokenReader, w tokenWriter, expandDefined bool) {
-	// dbg("==== expand enter")
+	// trc("==== expand enter")
 start:
 	tok, ok := ts.read()
 	tok.file = c.file
@@ -519,7 +539,7 @@ start:
 	if !ok {
 		// ---------------------------------------------------------- A
 		// return {};
-		// dbg("---- expand A")
+		// trc("---- expand A")
 		return
 	}
 
@@ -539,8 +559,8 @@ start:
 		if tok.has(nm) {
 			// -------------------------------------------------- B
 			// return T^HS • expand(TS’);
-			// dbg("---- expand B")
-			// dbg("expand write %q", tok)
+			// trc("---- expand B")
+			// trc("expand write %q", tok)
 			w.write(tok)
 			goto start
 		}
@@ -572,7 +592,7 @@ start:
 			if m != nil {
 				// -------------------------------------------------- C
 				// return expand(subst(ts(T), {}, {}, HS \cup {T}, {}) • TS’ );
-				// dbg("---- expand C")
+				// trc("---- expand C")
 				hs := hideSet{nm: {}}
 				for k, v := range tok.hs {
 					hs[k] = v
@@ -603,7 +623,7 @@ start:
 				// -------------------------------------------------- D
 				// check TS’ is actuals • )^HS’ • TS’’ and actuals are "correct for T"
 				// return expand(subst(ts(T), fp(T), actuals,(HS \cap HS’) \cup {T }, {}) • TS’’);
-				// dbg("---- expand D")
+				// trc("---- expand D")
 				hs := tok.hs
 				var skip []cppToken
 			again:
@@ -634,14 +654,21 @@ start:
 					}
 
 					arg := ap[0][0].value.String()
-					arg = arg[1 : len(arg)-1] // `"<x>"` -> `<x>`, `""y""` -> `"y"`
+					switch {
+					case strings.HasPrefix(arg, `"\"`): // `"\"stdio.h\""`
+						arg = arg[2:len(arg)-3] + `"` // -> `"stdio.h"`
+					case strings.HasPrefix(arg, `"<`): // `"<stdio.h>"`
+						arg = arg[1 : len(arg)-1] // -> `<stdio.h>`
+					default:
+						arg = ""
+					}
 					var tok3 token3
 					tok3.char = PPNUMBER
-					switch _, err := c.hasInclude(&tok, arg); {
-					case err != nil:
-						tok3.value = idZero
-					default:
-						tok3.value = idOne
+					tok3.value = idZero
+					if arg != "" {
+						if _, err := c.hasInclude(&tok, arg); err == nil {
+							tok3.value = idOne
+						}
 					}
 					tok := cppToken{token4{token3: tok3, file: c.file}, nil}
 					ts.ungets([]cppToken{tok})
@@ -677,13 +704,17 @@ start:
 	// ------------------------------------------------------------------ E
 	// note TS must be T^HS • TS’
 	// return T^HS • expand(TS’);
-	// dbg("---- expand E")
-	// dbg("expand write %q", tok)
+	// trc("---- expand E")
+	// trc("expand write %q", tok)
 	w.write(tok)
 	goto start
 }
 
-func (c *cpp) hasInclude(n Node, nm string) (string, error) {
+func (c *cpp) hasInclude(n Node, nm string) (rs string, err error) {
+	// nm0 := nm
+	// defer func() { //TODO-
+	// 	trc("nm0 %q nm %q rs %q err %v", nm0, nm, rs, err)
+	// }()
 	var (
 		b     byte
 		paths []string
@@ -882,28 +913,28 @@ func (c *cpp) actuals(m *Macro, r tokenReader) (varArgs []cppToken, ap [][]cppTo
 // combinations. After the entire input sequence is finished, the updated hide
 // set is applied to the output sequence, and that is the result of subst.
 func (c *cpp) subst(m *Macro, is []cppToken, fp []StringID, varArgs []cppToken, ap [][]cppToken, hs hideSet, os *[]cppToken, expandDefined bool) (r []cppToken) {
-	// var a []string
-	// for _, v := range ap {
-	// 	a = append(a, fmt.Sprintf("%q", cppToksStr(v, "|")))
-	// }
-	// dbg("==== subst: is %q, fp %v ap %v", cppToksStr(is, "|"), fp, a)
+	var ap0 [][]cppToken
+	for _, v := range ap {
+		ap0 = append(ap0, append([]cppToken(nil), v...))
+	}
+	// trc("==== subst: is %q, fp, %v ap@%p %v", cppToksStr(is, "|"), fp, &ap, cppToksStr2(ap))
 start:
-	// dbg("start: %q", cppToksStr(is, "|"))
+	// trc("start: is %q, fp %v, ap@%p %v, os %q", cppToksStr(is, "|"), fp, &ap, cppToksStr2(ap), cppToksStr(*os, "|"))
 	if len(is) == 0 {
 		// ---------------------------------------------------------- A
 		// return hsadd(HS, OS);
-		// dbg("---- A")
-		// dbg("subst returns %q", cppToksStr(os, "|"))
+		// trc("---- A")
+		// trc("subst RETURNS %q", cppToksStr(*os, "|"))
 		return c.hsAdd(hs, os)
 	}
 
 	tok := is[0]
 	var arg []cppToken
 	if tok.char == '#' {
-		if len(is) > 1 && is[1].char == IDENTIFIER && m.param(varArgs, ap, is[1].value, &arg) {
+		if len(is) > 1 && is[1].char == IDENTIFIER && m.param(varArgs, ap0, is[1].value, &arg) {
 			// -------------------------------------------------- B
 			// return subst(IS’, FP, AP, HS, OS • stringize(select(i, AP)));
-			// dbg("---- subst B")
+			// trc("---- subst B")
 			*os = append(*os, c.stringize(arg))
 			is = is[2:]
 			goto start
@@ -911,14 +942,14 @@ start:
 	}
 
 	if tok.char == PPPASTE {
-		if len(is) > 1 && is[1].char == IDENTIFIER && m.param(varArgs, ap, is[1].value, &arg) {
+		if len(is) > 1 && is[1].char == IDENTIFIER && m.param(varArgs, ap0, is[1].value, &arg) {
 			// -------------------------------------------------- C
-			// dbg("---- subst C")
+			// trc("---- subst C")
 			if len(arg) == 0 {
 				// TODO "only if actuals can be empty"
 				// ------------------------------------------ D
 				// return subst(IS’, FP, AP, HS, OS);
-				// dbg("---- D")
+				// trc("---- D")
 				if c := len(*os); c != 0 && (*os)[c-1].char == ',' {
 					*os = (*os)[:c-1]
 				}
@@ -928,7 +959,7 @@ start:
 
 			// -------------------------------------------------- E
 			// return subst(IS’, FP, AP, HS, glue(OS, select(i, AP)));
-			// dbg("---- subst E")
+			// trc("---- subst E, arg %q", cppToksStr(arg, "|"))
 			*os = c.glue(*os, arg)
 			is = is[2:]
 			goto start
@@ -937,39 +968,39 @@ start:
 		if len(is) > 1 {
 			// -------------------------------------------------- F
 			// return subst(IS’, FP, AP, HS, glue(OS, T^HS’));
-			// dbg("---- subst F")
+			// trc("---- subst F")
 			*os = c.glue(*os, is[1:2])
 			is = is[2:]
 			goto start
 		}
 	}
 
-	if tok.char == IDENTIFIER && (len(is) > 1 && is[1].char == PPPASTE) && m.param(varArgs, ap, tok.value, &arg) {
+	if tok.char == IDENTIFIER && (len(is) > 1 && is[1].char == PPPASTE) && m.param(varArgs, ap0, tok.value, &arg) {
 		// ---------------------------------------------------------- G
-		// dbg("---- subst G")
+		// trc("---- subst G")
 		if len(arg) == 0 {
 			// TODO "only if actuals can be empty"
 			// -------------------------------------------------- H
-			// dbg("---- subst H")
+			// trc("---- subst H")
 			is = is[2:] // skip T##
 			if len(is) > 0 && is[0].char == IDENTIFIER && m.param(varArgs, ap, is[0].value, &arg) {
 				// -------------------------------------------------- I
 				// return subst(IS’’, FP, AP, HS, OS • select(j, AP));
-				// dbg("---- subst I")
+				// trc("---- subst I")
 				*os = append(*os, arg...)
 				is = is[1:]
 				goto start
 			} else {
 				// -------------------------------------------------- J
 				// return subst(IS’, FP, AP, HS, OS);
-				// dbg("---- subst J")
+				// trc("---- subst J")
 				goto start
 			}
 		}
 
 		// ---------------------------------------------------------- K
 		// return subst(##^HS’ • IS’, FP, AP, HS, OS • select(i, AP));
-		// dbg("---- subst K")
+		// trc("---- subst K")
 		*os = append(*os, arg...)
 		is = is[1:]
 		goto start
@@ -979,7 +1010,7 @@ start:
 	if tok.char == IDENTIFIER && m.param2(varArgs, ap, tok.value, &arg, &ax) {
 		// ------------------------------------------ L
 		// return subst(IS’, FP, AP, HS, OS • expand(select(i, AP)));
-		// dbg("---- subst L")
+		// trc("---- subst L")
 		// if toks, ok := cache[tok.value]; ok {
 		// 	os = append(os, toks...)
 		// 	is = is[1:]
@@ -988,7 +1019,9 @@ start:
 
 		sel := cppReader{buf: arg}
 		var w cppWriter
+		// trc("---- L(1) ap@%p %v", &ap, cppToksStr2(ap))
 		c.expand(&sel, &w, expandDefined)
+		// trc("---- L(2) ap@%p %v", &ap, cppToksStr2(ap))
 		*os = append(*os, w.toks...)
 		if ax >= 0 {
 			ap[ax] = w.toks
@@ -1000,9 +1033,9 @@ start:
 	// ------------------------------------------------------------------ M
 	// note IS must be T^HS’ • IS’
 	// return subst(IS’, FP, AP, HS, OS • T^HS’);
-	// dbg("---- subst M")
 	*os = append(*os, tok)
 	is = is[1:]
+	// trc("---- subst M: is %q, os %q", cppToksStr(is, "|"), cppToksStr(*os, "|"))
 	goto start
 }
 
@@ -1027,7 +1060,18 @@ start:
 // 43
 // 0
 // $
+//
+// ----------------------------------------------------------------------------
+//	glue(LS,RS ) /* paste last of left side with first of right side */
+//	{
+//		if LS is L^HS and RS is R^HS’ • RS’ then
+//			return L&R^(HS∩HS’) • RS’;	/* undefined if L&R is invalid */
+
+//		// note LS must be L HS • LS’
+//		return L^HS • glue(LS’,RS );
+//	}
 func (c *cpp) glue(ls, rs []cppToken) (out []cppToken) {
+	// trc("ls %q, rs %q", cppToksStr(ls, "|"), cppToksStr(rs, "|"))
 	if len(rs) == 0 {
 		return ls
 	}
@@ -1250,7 +1294,7 @@ func (c *cpp) eval(expr []token3) interface{} {
 	}
 	toks = toks[:p]
 	s := cppScanner(toks)
-	val := c.conditionalExpression(&s, true)
+	val := c.expression(&s, true)
 	switch s.peek().char {
 	case -1, '#':
 		// ok
@@ -1260,6 +1304,34 @@ func (c *cpp) eval(expr []token3) interface{} {
 		return nil
 	}
 	return val
+}
+
+// [0], 6.5.17 Comma operator
+//
+//  expression:
+// 	assignment-expression
+// 	expression , assignment-expression
+func (c *cpp) expression(s *cppScanner, eval bool) interface{} {
+	for {
+		r := c.assignmentExpression(s, eval)
+		if s.peek().char != ',' {
+			return r
+		}
+
+		s.next()
+	}
+}
+
+// [0], 6.5.16 Assignment operators
+//
+//  assignment-expression:
+// 	conditional-expression
+// 	unary-expression assignment-operator assignment-expression
+//
+//  assignment-operator: one of
+// 	= *= /= %= += -= <<= >>= &= ^= |=
+func (c *cpp) assignmentExpression(s *cppScanner, eval bool) interface{} {
+	return c.conditionalExpression(s, eval)
 }
 
 // [0], 6.5.15 Conditional operator
@@ -1280,6 +1352,20 @@ func (c *cpp) conditionalExpression(s *cppScanner, eval bool) interface{} {
 
 		s.next()
 		expr3 := c.conditionalExpression(s, !exprIsNonZero)
+
+		// [0] 6.5.15
+		//
+		// 5. If both the second and third operands have arithmetic type, the result
+		// type that would be determined by the usual arithmetic conversions, were they
+		// applied to those two operands, is the type of the result.
+		x := c.operand(expr2)
+		y := c.operand(expr3)
+		if x != nil && y != nil {
+			x, y = usualArithmeticConversions(c.ctx, nil, x, y, false)
+			expr2 = c.fromOperand(x)
+			expr3 = c.fromOperand(y)
+		}
+
 		switch {
 		case exprIsNonZero:
 			expr = expr2
@@ -1288,6 +1374,28 @@ func (c *cpp) conditionalExpression(s *cppScanner, eval bool) interface{} {
 		}
 	}
 	return expr
+}
+
+func (c *cpp) operand(v interface{}) Operand {
+	switch x := v.(type) {
+	case int64:
+		return &operand{typ: &typeBase{size: 8, kind: byte(LongLong), flags: fSigned}, value: Int64Value(x)}
+	case uint64:
+		return &operand{typ: &typeBase{size: 8, kind: byte(ULongLong)}, value: Uint64Value(x)}
+	default:
+		return nil
+	}
+}
+
+func (c *cpp) fromOperand(op Operand) interface{} {
+	switch x := op.Value().(type) {
+	case Int64Value:
+		return int64(x)
+	case Uint64Value:
+		return uint64(x)
+	default:
+		return nil
+	}
 }
 
 // [0], 6.5.14 Logical OR operator
@@ -1948,7 +2056,7 @@ func (c *cpp) primaryExpression(s *cppScanner, eval bool) interface{} {
 		return c.intConst(tok)
 	case '(':
 		s.next()
-		expr := c.conditionalExpression(s, eval)
+		expr := c.expression(s, eval)
 		if s.peek().char == ')' {
 			s.next()
 		}
@@ -2088,6 +2196,8 @@ func decodeEscapeSequence(ctx *context, tok cppToken, s string) (rune, int) {
 		return 7, 2
 	case 'b':
 		return 8, 2
+	case 'e':
+		return 0x1b, 2
 	case 'f':
 		return 12, 2
 	case 'n':
@@ -2350,21 +2460,7 @@ func (n *ppIncludeDirective) translationPhase4(c *cpp) {
 				v = dir
 			}
 
-			var p string
-			switch {
-			case strings.HasPrefix(nm, "./"):
-				wd := c.ctx.cfg.WorkingDir
-				if wd == "" {
-					var err error
-					if wd, err = os.Getwd(); err != nil {
-						c.err(toks[0], "cannot determine working dir: %v", err)
-						return
-					}
-				}
-				p = filepath.Join(wd, nm)
-			default:
-				p = filepath.Join(v, nm)
-			}
+			p := filepath.Join(v, nm)
 			fi, err := c.ctx.statFile(p, sys)
 			if err != nil || fi.IsDir() {
 				continue
@@ -2381,6 +2477,17 @@ func (n *ppIncludeDirective) translationPhase4(c *cpp) {
 		return
 	}
 
+	if h := c.ctx.cfg.IncludeFileHandler; h != nil {
+		var position gotoken.Position
+		if p := toks[0].Pos(); p.IsValid() {
+			position = gotoken.Position(c.file.PositionFor(p, true))
+		}
+		apath, err := filepath.Abs(path)
+		if err != nil {
+			c.err(toks[0], "%s: cannot compute absolute path: %v", path, err)
+		}
+		h(position, apath)
+	}
 	cf, err := cache.getFile(c.ctx, path, sys, false)
 	if err != nil {
 		c.err(toks[0], "%s: %v", path, err)
@@ -2649,8 +2756,9 @@ func (n *ppTextLine) getToks() []token3 { return n.toks }
 func (n *ppTextLine) translationPhase4(c *cpp) { c.send(n.toks) }
 
 type ppLineDirective struct {
-	toks []token3
-	args []token3
+	toks    []token3
+	args    []token3
+	nextPos int
 }
 
 func (n *ppLineDirective) getToks() []token3 { return n.toks }
@@ -2673,7 +2781,7 @@ func (n *ppLineDirective) translationPhase4(c *cpp) {
 			toks = toks[1:]
 		}
 		if len(toks) == 1 {
-			c.file.AddLineInfo(int(n.toks[len(n.toks)-1].pos), c.file.Name(), int(ln))
+			c.file.AddLineInfo(int(n.nextPos)-1, c.file.Name(), int(ln))
 			return
 		}
 
@@ -2682,7 +2790,7 @@ func (n *ppLineDirective) translationPhase4(c *cpp) {
 			toks = toks[1:]
 		}
 		if len(toks) == 0 {
-			c.file.AddLineInfo(int(n.toks[len(n.toks)-1].pos), c.file.Name(), int(ln))
+			c.file.AddLineInfo(int(n.nextPos)-1, c.file.Name(), int(ln))
 			return
 		}
 
@@ -2690,7 +2798,8 @@ func (n *ppLineDirective) translationPhase4(c *cpp) {
 		case STRINGLITERAL:
 			s := t.String()
 			s = s[1 : len(s)-1]
-			c.file.AddLineInfo(int(n.toks[len(n.toks)-1].pos), s, int(ln))
+			c.file.AddLineInfo(int(n.nextPos)-1, s, int(ln))
+			c.fileMacro.repl[0].value = t.value
 			for len(toks) != 0 && toks[0].char == ' ' {
 				toks = toks[1:]
 			}

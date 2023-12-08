@@ -3,14 +3,14 @@ package jira
 import (
 	"context"
 	"fmt"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"time"
 
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	jiraClient "k8s.io/test-infra/prow/jira"
 )
 
-//TODO move to the Jira Client lib
+// TODO move to the Jira Client lib
 const (
 	IssueQaContactField     = "customfield_12316243"
 	IssueTargetVersionField = "customfield_12319940"
@@ -85,7 +85,7 @@ func addTimeToJQL(t time.Time, jql string) string {
 	if !t.IsZero() {
 		// JQL "updated" accepts this format: "yyyy/MM/dd HH:mm"
 		roundedTime := fmt.Sprintf("%d/%d/%d %d:%d", t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute())
-		return fmt.Sprintf("%s&updated>='%s'", jql, roundedTime)
+		return fmt.Sprintf("(%s)&updated>='%s'", jql, roundedTime)
 	}
 	return jql
 }

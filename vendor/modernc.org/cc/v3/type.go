@@ -281,6 +281,10 @@ type Type interface {
 	// with union type can only contain one member at a time.
 	IsAggregate() bool
 
+	// IsPacked reports whether type is packed. It panics if the type's
+	// Kind is valid but not Struct or Union.
+	IsPacked() bool
+
 	// IsIncomplete reports whether type is incomplete.
 	IsIncomplete() bool
 
@@ -399,8 +403,8 @@ type Type interface {
 	// Name returns type name, if any.
 	Name() StringID
 
-	// atomic reports whether type has type qualifier "_Atomic".
-	atomic() bool
+	// IsAtomic reports whether type has type qualifier "_Atomic".
+	IsAtomic() bool
 
 	// hasConst reports whether type has type qualifier "const".
 	hasConst() bool
@@ -440,14 +444,15 @@ type Field interface {
 	BitFieldOffset() int
 	BitFieldWidth() int
 	Declarator() *StructDeclarator
+	InUnion() bool // Directly or indirectly
 	Index() int
 	IsBitField() bool
 	IsFlexible() bool // https://en.wikipedia.org/wiki/Flexible_array_member
-	InUnion() bool    // Directly or indirectly
 	Mask() uint64
 	Name() StringID  // Can be zero.
 	Offset() uintptr // In bytes from the beginning of the struct/union.
-	Padding() int
+	Padding() int    // In bytes after the field. N/A for bit fields, fields preceding bit fields or union fields.
+	Parent() Type    // The struct/union type that contains the field.
 	Promote() Type
 	Type() Type // Field type.
 }
@@ -564,7 +569,7 @@ const (
 	fTypedef
 )
 
-type flag uint8
+type flag uint16
 
 const (
 	// function specifier
@@ -580,6 +585,8 @@ const (
 	// other
 	fIncomplete
 	fSigned // Valid only for integer types.
+	fPacked
+	fAligned // __attribute__((aligned(n))) applied.
 )
 
 type typeBase struct {
@@ -604,7 +611,7 @@ func (t *typeBase) check(ctx *context, td typeDescriptor, defaultInt bool) (r Ty
 			case DeclarationSpecifiersStorage: // StorageClassSpecifier DeclarationSpecifiers
 				// nop
 			case DeclarationSpecifiersTypeSpec: // TypeSpecifier DeclarationSpecifiers
-				typeSpecifiers = append(typeSpecifiers, n.TypeSpecifier)
+				typeSpecifiers = append(typeSpecifiers, n.TypeSpecifier.list()...)
 			case DeclarationSpecifiersTypeQual: // TypeQualifier DeclarationSpecifiers
 				// nop
 			case DeclarationSpecifiersFunc: // FunctionSpecifier DeclarationSpecifiers
@@ -621,7 +628,7 @@ func (t *typeBase) check(ctx *context, td typeDescriptor, defaultInt bool) (r Ty
 		for ; n != nil; n = n.SpecifierQualifierList {
 			switch n.Case {
 			case SpecifierQualifierListTypeSpec: // TypeSpecifier SpecifierQualifierList
-				typeSpecifiers = append(typeSpecifiers, n.TypeSpecifier)
+				typeSpecifiers = append(typeSpecifiers, n.TypeSpecifier.list()...)
 			case SpecifierQualifierListTypeQual: // TypeQualifier SpecifierQualifierList
 				// nop
 			case SpecifierQualifierListAlignSpec: // AlignmentSpecifier SpecifierQualifierList
@@ -734,6 +741,11 @@ func (t *typeBase) check(ctx *context, td typeDescriptor, defaultInt bool) (r Ty
 		}
 	}
 	return typ
+}
+
+func (t *typeBase) setAligned(n int) {
+	t.flags |= fAligned
+	t.align = byte(n)
 }
 
 // IsAssingmentCompatible implements Type.
@@ -909,13 +921,18 @@ func (t *typeBase) IsCompatibleLayout(u Type) bool {
 	return t.IsIntegerType() && u.Kind() == Enum && t.Size() == u.Size()
 }
 
+// IsPacked implements Type.
+func (t *typeBase) IsPacked() bool {
+	return t.flags&fPacked != 0
+}
+
 // UnionCommon implements Type.
 func (t *typeBase) UnionCommon() Kind {
 	panic(internalErrorf("%s: UnionCommon of invalid type", t.Kind()))
 }
 
-// atomic implements Type.
-func (t *typeBase) atomic() bool { return t.flags&fAtomic != 0 }
+// IsAtomic implements Type.
+func (t *typeBase) IsAtomic() bool { return t.flags&fAtomic != 0 }
 
 // Attributes implements Type.
 func (t *typeBase) Attributes() (a []*AttributeSpecifier) { return nil }
@@ -1203,7 +1220,7 @@ func (t *typeBase) Tag() StringID {
 // string implements Type.
 func (t *typeBase) string(b *bytes.Buffer) {
 	spc := ""
-	if t.atomic() {
+	if t.IsAtomic() {
 		b.WriteString("atomic")
 		spc = " "
 	}
@@ -1811,6 +1828,15 @@ func (t *aliasType) IsCompatibleLayout(u Type) bool {
 	return t.d.Type().IsCompatibleLayout(u)
 }
 
+// IsPacked implements Type.
+func (t *aliasType) IsPacked() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.d.Type().IsPacked()
+}
+
 // UnionCommon implements Type.
 func (t *aliasType) UnionCommon() Kind { return t.d.Type().UnionCommon() }
 
@@ -1918,7 +1944,7 @@ func (t *aliasType) Size() uintptr { return t.d.Type().Size() }
 // String implements Type.
 func (t *aliasType) String() string {
 	var a []string
-	if t.typeBase.atomic() {
+	if t.typeBase.IsAtomic() {
 		a = append(a, "atomic")
 	}
 	if t.typeBase.hasConst() {
@@ -1946,8 +1972,8 @@ func (t *aliasType) Tag() StringID { return t.d.Type().Tag() }
 // Name implements Type.
 func (t *aliasType) Name() StringID { return t.nm }
 
-// atomic implements Type.
-func (t *aliasType) atomic() bool { return t.d.Type().atomic() }
+// IsAtomic implements Type.
+func (t *aliasType) IsAtomic() bool { return t.d.Type().IsAtomic() }
 
 // Inline implements Type.
 func (t *aliasType) Inline() bool { return t.d.Type().Inline() }
@@ -1984,11 +2010,13 @@ type field struct {
 	blockStart   *field // First bit field of the block this bit field belongs to.
 	d            *StructDeclarator
 	offset       uintptr // In bytes from start of the struct.
+	parent       Type
 	promote      Type
 	typ          Type
 
 	name StringID // Can be zero.
 	x    int
+	xs   []int
 
 	isBitField bool
 	isFlexible bool // https://en.wikipedia.org/wiki/Flexible_array_member
@@ -2013,9 +2041,10 @@ func (f *field) Mask() uint64                  { return f.bitFieldMask }
 func (f *field) Name() StringID                { return f.name }
 func (f *field) Offset() uintptr               { return f.offset }
 func (f *field) Padding() int                  { return int(f.pad) } // N/A for bitfields
+func (f *field) Parent() Type                  { return f.parent }
 func (f *field) Promote() Type                 { return f.promote }
 func (f *field) Type() Type                    { return f.typ }
-func (f *field) at(offDelta uintptr) *field    { r := *f; f.offset += offDelta; return &r }
+func (f *field) at(offDelta uintptr) *field    { r := *f; r.offset += offDelta; return &r }
 
 func (f *field) string(b *bytes.Buffer) {
 	b.WriteString(f.name.String())
@@ -2253,6 +2282,7 @@ func (t *structType) check(ctx *context, n Node) *structType {
 
 	// Reject ambiguous names.
 	for _, f := range t.fields {
+		f.parent = t
 		if f.Name() != 0 {
 			continue
 		}
@@ -2372,6 +2402,10 @@ func (t *structType) FieldByName(name StringID) (Field, bool) {
 
 // FieldByName2 implements Type.
 func (t *structType) FieldByName2(name StringID) (Field, []int, bool) {
+	if f := t.m[name]; f != nil {
+		return f, f.xs, true
+	}
+
 	if t.paths == nil {
 		t.paths = map[StringID]*fieldPath{}
 		t.computePaths(0, t.paths, nil)
@@ -2397,7 +2431,7 @@ func (t *structType) computePaths(off uintptr, paths map[StringID]*fieldPath, pa
 					ex.fld = f.at(off)
 					ex.path = append([]int(nil), path...)
 					ex.ambiguous = false
-				case len(path) == len(ex.path):
+				case len(path) == len(ex.path) && (off+f.Offset() != ex.fld.Offset() || f.Type().Size() != ex.fld.Type().Size()):
 					ex.ambiguous = true
 				}
 			default:
@@ -2419,6 +2453,15 @@ type taggedType struct {
 	typ             Type
 
 	tag StringID
+}
+
+// IsPacked implements Type.
+func (t *taggedType) IsPacked() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.underlyingType().IsPacked()
 }
 
 // HasFlexibleMember implements Type.
@@ -2501,12 +2544,11 @@ func (t *taggedType) isAssingmentCompatibleOperand(rhs Operand) (r bool) {
 
 // IsCompatible implements Type.
 func (t *taggedType) IsCompatible(u Type) (r bool) {
-	// defer func() {
-	// 	u0 := u
-	// 	if !r {
-	// 		trc("TRACE %v <- %v\n%s", t, u0, debug.Stack()) //TODO-
-	// 	}
-	// }()
+	defer func() {
+		// if !r {
+		// 	trc("TRACE %v <- %v: %v (%s)", t, u0, r, origin(2)) //TODO-
+		// }
+	}()
 	if t == nil || u == nil {
 		return false
 	}
@@ -2619,6 +2661,11 @@ func (t *taggedType) FieldByIndex(i []int) Field { return t.underlyingType().Fie
 // FieldByName implements Type.
 func (t *taggedType) FieldByName(s StringID) (Field, bool) { return t.underlyingType().FieldByName(s) }
 
+// FieldByName2 implements Type.
+func (t *taggedType) FieldByName2(s StringID) (Field, []int, bool) {
+	return t.underlyingType().FieldByName2(s)
+}
+
 // IsSignedType implements Type.
 func (t *taggedType) IsSignedType() bool { return t.underlyingType().IsSignedType() }
 
@@ -2641,7 +2688,8 @@ func (t *taggedType) underlyingType() Type {
 	for s := t.resolutionScope; s != nil; s = s.Parent() {
 		for _, v := range s[t.tag] {
 			switch x := v.(type) {
-			case *Declarator, *StructDeclarator:
+			case *Declarator, *StructDeclarator, *LabeledStatement:
+				// nop
 			case *EnumSpecifier:
 				if k == Enum && x.Case == EnumSpecifierDef {
 					t.typ = x.Type()
@@ -2665,7 +2713,7 @@ func (t *taggedType) underlyingType() Type {
 					}
 				}
 			default:
-				panic(internalError())
+				panic(todo("internal error: %T", x))
 			}
 		}
 	}
@@ -3048,7 +3096,7 @@ func (t *vectorType) underlyingType() Type { return t }
 
 func isCharType(t Type) bool {
 	switch t.Kind() {
-	case Char, SChar, UChar:
+	case Char, SChar, UChar, Int8, UInt8:
 		return true
 	}
 
@@ -3063,4 +3111,156 @@ func isWCharType(t Type) bool {
 	default:
 		return false
 	}
+}
+
+// Struct layout describes storage details of a struct/union type.
+type StructLayout struct {
+	Offsets        []uintptr // In field order.
+	OffsetToFields map[uintptr][]Field
+	PaddingsBefore map[Field]int
+	PaddingAfter   int
+	t              Type
+
+	NeedExplicitAlign bool
+}
+
+// NewStructLayout returns a newly created StructLayout for t, or nil if t is
+// not a struct/union type.
+func NewStructLayout(t Type) *StructLayout {
+	switch t.Kind() {
+	case Struct, Union:
+		// ok
+	default:
+		return nil
+	}
+
+	nf := t.NumField()
+	flds := map[uintptr][]Field{}
+	var maxAlign int
+	for idx := []int{0}; idx[0] < nf; idx[0]++ {
+		f := t.FieldByIndex(idx)
+		if f.IsBitField() && f.BitFieldWidth() == 0 {
+			continue
+		}
+
+		if a := f.Type().Align(); !f.IsBitField() && a > maxAlign {
+			maxAlign = a
+		}
+		off := f.Offset()
+		flds[off] = append(flds[off], f)
+	}
+	var offs []uintptr
+	for k := range flds {
+		offs = append(offs, k)
+	}
+	sort.Slice(offs, func(i, j int) bool { return offs[i] < offs[j] })
+	var pads map[Field]int
+	var pos uintptr
+	var forceAlign bool
+	for _, off := range offs {
+		f := flds[off][0]
+		ft := f.Type()
+		//trc("%q off %d pos %d %v %v %v", f.Name(), off, pos, ft, ft.Kind(), ft.IsIncomplete())
+		switch {
+		case ft.IsBitFieldType():
+			if p := int(off - pos); p != 0 {
+				if pads == nil {
+					pads = map[Field]int{}
+				}
+				pads[f] = p
+				pos = off
+			}
+			pos += uintptr(f.BitFieldBlockWidth()) >> 3
+		default:
+			var sz uintptr
+			switch {
+			case ft.Kind() != Array || ft.Len() != 0:
+				sz = ft.Size()
+			default:
+				forceAlign = true
+			}
+			if p := int(off - pos); p != 0 {
+				if pads == nil {
+					pads = map[Field]int{}
+				}
+				pads[f] = p
+				pos = off
+			}
+			pos += sz
+		}
+	}
+	return &StructLayout{
+		NeedExplicitAlign: forceAlign || maxAlign < t.Align(),
+		OffsetToFields:    flds,
+		Offsets:           offs,
+		PaddingAfter:      int(t.Size() - pos),
+		PaddingsBefore:    pads,
+		t:                 t,
+	}
+}
+
+func (x *StructLayout) String() string {
+	t := x.t
+	nf := t.NumField()
+	var a []string
+	w := 0
+	for i := 0; i < nf; i++ {
+		if n := len(t.FieldByIndex([]int{i}).Name().String()); n > w {
+			w = n
+		}
+	}
+	for i := 0; i < nf; i++ {
+		f := t.FieldByIndex([]int{i})
+		var bf StringID
+		if f.IsBitField() {
+			if bfbf := f.(*field).blockStart; bfbf != nil {
+				bf = bfbf.Name()
+			}
+		}
+		a = append(a, fmt.Sprintf("%3d: %*q: BitFieldOffset %3v, BitFieldWidth %3v, IsBitField %5v, Mask: %#016x, off: %3v, pad %2v, BitFieldBlockWidth: %2d, BitFieldBlockFirst: %s, %v",
+			i, w+2, f.Name(), f.BitFieldOffset(), f.BitFieldWidth(),
+			f.IsBitField(), f.Mask(), f.Offset(), f.Padding(),
+			f.BitFieldBlockWidth(), bf, f.Type(),
+		))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%v\n%s\n----\n", t, strings.Join(a, "\n"))
+	fmt.Fprintf(&b, "size: %v\n", t.Size())
+	fmt.Fprintf(&b, "offs: %v\n", x.Offsets)
+	a = a[:0]
+	for k, v := range x.OffsetToFields {
+		var b []string
+		for _, w := range v {
+			b = append(b, fmt.Sprintf("%q padBefore: %d ", w.Name(), x.PaddingsBefore[w]))
+		}
+		a = append(a, fmt.Sprintf("%4d %s", k, b))
+	}
+	sort.Strings(a)
+	for _, v := range a {
+		fmt.Fprintf(&b, "%s\n", v)
+	}
+	fmt.Fprintf(&b, "padAfter: %v\n", x.PaddingAfter)
+	for i := 0; i < nf; i++ {
+		f := t.FieldByIndex([]int{i})
+		if x, ok := f.Type().(*structType); ok {
+			s := dumpLayout(x)
+			a := strings.Split(s, "\n")
+			fmt.Fprintf(&b, "====\n")
+			for _, v := range a {
+				fmt.Fprintf(&b, "%s\n", v)
+			}
+		}
+	}
+	return b.String()
+}
+
+func dumpLayout(t Type) string {
+	switch t.Kind() {
+	case Struct, Union:
+		// ok
+	default:
+		return t.String()
+	}
+
+	return NewStructLayout(t).String()
 }

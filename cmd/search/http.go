@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -21,7 +21,7 @@ import (
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	units "github.com/docker/go-units"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/ci-search/bugzilla"
 	"github.com/openshift/ci-search/metricdb/httpgraph"
@@ -57,7 +57,7 @@ func (o *options) handleConfig(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data, err := ioutil.ReadFile(o.ConfigPath)
+	data, err := os.ReadFile(o.ConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to read config: %v", err), http.StatusInternalServerError)
 		return

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build ccgo.dmesg
 // +build ccgo.dmesg
 
 package ccgo // import "modernc.org/ccgo/v3/lib"
@@ -31,7 +32,8 @@ func dmesg(s string, args ...interface{}) {
 	if s == "" {
 		s = strings.Repeat("%v ", len(args))
 	}
-	s = fmt.Sprintf(pid+s, args...)
+	s = fmt.Sprintf(s, args...)
+	s = pid + s
 	switch {
 	case len(s) != 0 && s[len(s)-1] == '\n':
 		fmt.Fprint(logf, s)
