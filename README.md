@@ -19,9 +19,9 @@ The config file matches the testgrid config format and looks like:
 ```
 test_groups:
 - name: release-openshift-origin-installer-e2e-aws-4.0
-  gcs_prefix: origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.0
+  gcs_prefix: test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.0
 - name: release-openshift-origin-installer-e2e-aws-serial-4.0
-  gcs_prefix: origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-serial-4.0
+  gcs_prefix: test-platform-results/logs/release-openshift-origin-installer-e2e-aws-serial-4.0
 ...
 - name: NAME
   gcs_prefix: <gcs_bucket_and_directory>

@@ -121,7 +121,7 @@ func main() {
 	versionsByType := make(map[string]string, 10)
 
 	index := &prow.Index{
-		Bucket:    "origin-ci-test",
+		Bucket:    "test-platform-results",
 		IndexName: "job-metrics",
 	}
 	if err := index.EachJob(context.TODO(), gcsClient, 0, *statusURL, func(partialJob prow.Job, attr *storage.ObjectAttrs) error {

@@ -18,7 +18,7 @@ type Result struct {
 	// LastModified is the time when the item was last updated (job failure or bug update)
 	LastModified time.Time
 
-	// URI is the job detail page, e.g. https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309
+	// URI is the job detail page, e.g. https://prow.ci.openshift.org/view/gs/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309
 	URI *url.URL
 
 	// FileType is the type of file where the match was found: "bug", "build-log" or "junit".
@@ -30,7 +30,7 @@ type Result struct {
 	// Name is a string to be printed to the user, which might be the job name or bug title
 	Name string
 
-	// Number is the job number, e.g. 309 for origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for origin-ci-test/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.
+	// Number is the job number, e.g. 309 for test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 or 5466 for test-platform-results/pr-logs/pull/openshift_installer/1650/pull-ci-openshift-installer-master-e2e-aws/5466.
 	Number int
 
 	// IgnoreAge is true if the result should be included regardless of age.

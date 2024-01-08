@@ -20,7 +20,7 @@ func Test_readJobRange(t *testing.T) {
 
 	names := sets.NewString()
 	now := time.Now()
-	if err := readJobRange(context.TODO(), client.Bucket("origin-ci-test"), "job-state", now.Add(-3*time.Hour), now, func(attr *storage.ObjectAttrs) error {
+	if err := readJobRange(context.TODO(), client.Bucket("test-platform-results"), "job-state", now.Add(-3*time.Hour), now, func(attr *storage.ObjectAttrs) error {
 		klog.Infof("%s", attr.Name)
 		if names.Has(attr.Name) {
 			return fmt.Errorf("duplicate name: %s", attr.Name)
@@ -37,7 +37,7 @@ func Test_IndexReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := ReadFromIndex(context.Background(), client, "origin-ci-test", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.ci.openshift.org"})
+	r, err := ReadFromIndex(context.Background(), client, "test-platform-results", "job-state", 100*time.Minute, url.URL{Scheme: "https", Host: "prow.ci.openshift.org"})
 	if err != nil {
 		t.Fatal(err)
 	}

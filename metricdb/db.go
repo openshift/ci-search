@@ -217,7 +217,7 @@ func (d *DB) indexFromGCS(start time.Time) error {
 	}
 
 	index := &prow.Index{
-		Bucket:    "origin-ci-test",
+		Bucket:    "test-platform-results",
 		IndexName: "job-metrics",
 	}
 

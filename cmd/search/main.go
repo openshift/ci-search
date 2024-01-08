@@ -54,7 +54,7 @@ func main() {
 		MaxAge:            14 * 24 * time.Hour,
 		JobURIPrefix:      "https://prow.ci.openshift.org/view/gs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
-		IndexBucket:       "origin-ci-test",
+		IndexBucket:       "test-platform-results",
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
@@ -74,8 +74,8 @@ func main() {
 	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
 	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
 	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
-	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
-	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/origin-ci-test/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
+	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
+	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
 	flag.StringVar(&opt.IndexBucket, "index-bucket", opt.IndexBucket, "A GCS bucket to look for job indices in.")
 	flag.StringVar(&opt.MetricDBPath, "metric-db", opt.MetricDBPath, "Path where metrics should be recorded as a SQLite database. If empty, no metrics will be stored.")
