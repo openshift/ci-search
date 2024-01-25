@@ -1,0 +1,8 @@
+FROM registry.ci.openshift.org/openshift/release:rhel-9-release-golang-1.21-openshift-4.16
+WORKDIR /go/src/github.com/openshift/ci-search
+COPY . .
+RUN GO_PACKAGES=./cmd/jira-watcher-controller make build
+
+FROM registry.ci.openshift.org/openshift/centos:stream9
+COPY --from=0 /go/src/github.com/openshift/ci-search/jira-watcher-controller /usr/bin/
+ENTRYPOINT ["jira-watcher-controller"]
