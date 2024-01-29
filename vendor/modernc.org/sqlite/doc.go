@@ -2,10 +2,33 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package sqlite is a CGo-free port of SQLite.
+// Package sqlite is a sql/database driver using a CGo-free port of the C
+// SQLite3 library.
 //
 // SQLite is an in-process implementation of a self-contained, serverless,
 // zero-configuration, transactional SQL database engine.
+//
+// Thanks
+//
+// This project is sponsored by Schleibinger Geräte Teubert u. Greim GmbH by
+// allowing one of the maintainers to work on it also in office hours.
+//
+// Supported platforms and architectures
+//
+// These combinations of GOOS and GOARCH are currently supported
+//
+//	OS      Arch    SQLite version
+//	------------------------------
+//	darwin	amd64   3.39.3
+//	darwin	arm64   3.39.3
+//	freebsd	amd64   3.39.3
+//	linux	386     3.39.3
+//	linux	amd64   3.39.3
+//	linux	arm     3.39.3
+//	linux	arm64   3.39.3
+//	linux	riscv64 3.39.3
+//	windows	amd64   3.39.3
+//	windows	arm64   3.39.3
 //
 // Builders
 //
@@ -14,6 +37,46 @@
 //	https://modern-c.appspot.com/-/builder/?importpath=modernc.org%2fsqlite
 //
 // Changelog
+//
+// 2022-07-26 v1.18.0:
+//
+// Adds support for Go fs.FS based SQLite virtual filesystems, see function New
+// in modernc.org/sqlite/vfs and/or TestVFS in all_test.go
+//
+// 2022-04-24 v1.17.0:
+//
+// Support windows/arm64.
+//
+// 2022-04-04 v1.16.0:
+//
+// Support scalar application defined functions written in Go.
+//
+//  https://www.sqlite.org/appfunc.html
+//
+// 2022-03-13 v1.15.0:
+//
+// Support linux/riscv64.
+//
+// 2021-11-13 v1.14.0:
+//
+// Support windows/amd64. This target had previously only experimental status
+// because of a now resolved memory leak.
+//
+// 2021-09-07 v1.13.0:
+//
+// Support freebsd/amd64.
+//
+// Changelog
+//
+// 2021-06-23 v1.11.0:
+//
+// Upgrade to use sqlite 3.36.0, release notes at https://www.sqlite.org/releaselog/3_36_0.html.
+//
+// 2021-05-06 v1.10.6:
+//
+// Fixes a memory corruption issue
+// (https://gitlab.com/cznic/sqlite/-/issues/53).  Versions since v1.8.6 were
+// affected and should be updated to v1.10.6.
 //
 // 2021-03-14 v1.10.0:
 //
@@ -108,22 +171,6 @@
 //	db, err := sql.Open("sqlite", dsnURI)
 //
 //	...
-//
-// Supported platforms and architectures
-//
-// These combinations of GOOS and GOARCH are currently supported
-//
-// 	darwin	amd64
-// 	darwin	arm64
-// 	linux	386
-// 	linux	amd64
-// 	linux	arm
-// 	linux	arm64
-//
-// Planned platforms and architectures
-//
-// 	windows	386
-// 	windows	amd64
 //
 // Debug and development versions
 //

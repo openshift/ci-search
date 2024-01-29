@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !libc.membrk && !libc.memgrind
 // +build !libc.membrk,!libc.memgrind
 
 package libc // import "modernc.org/libc"
@@ -86,6 +87,10 @@ func Xfree(t *TLS, p uintptr) {
 }
 
 func UsableSize(p uintptr) types.Size_t {
+	allocMu.Lock()
+
+	defer allocMu.Unlock()
+
 	return types.Size_t(memory.UintptrUsableSize(p))
 }
 

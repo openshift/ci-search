@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !libc.membrk && libc.memgrind
 // +build !libc.membrk,libc.memgrind
 
 // This is a debug-only version of the memory handling functions. When a
@@ -209,7 +210,7 @@ func Xfree(t *TLS, p uintptr) {
 
 	defer allocMu.Unlock()
 
-	sz := UsableSize(p)
+	sz := memory.UintptrUsableSize(p)
 	if memAuditEnabled {
 		pc, _, _, ok := runtime.Caller(1)
 		if !ok {
@@ -238,6 +239,10 @@ func Xfree(t *TLS, p uintptr) {
 }
 
 func UsableSize(p uintptr) types.Size_t {
+	allocMu.Lock()
+
+	defer allocMu.Unlock()
+
 	if memAuditEnabled {
 		pc, _, _, ok := runtime.Caller(1)
 		if !ok {

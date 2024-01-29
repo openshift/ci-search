@@ -2,7 +2,8 @@ package jira
 
 import (
 	"context"
-	"k8s.io/klog"
+	helpers "github.com/openshift/ci-search/pkg/jira"
+	"k8s.io/klog/v2"
 	"reflect"
 	"strconv"
 	"strings"
@@ -94,7 +95,7 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer) e
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    s.issueAdd,
 		DeleteFunc: s.issueDelete,
-		UpdateFunc: func(_, new interface{}) { s.issueUpdate(new) },
+		UpdateFunc: func(old, new interface{}) { s.issueUpdate(old, new) },
 	})
 
 	klog.V(5).Infof("Running comment store")
@@ -167,30 +168,10 @@ func (s *CommentStore) run(ctx context.Context) error {
 		if err != nil {
 			klog.Warningf("comment store failed to retrieve comments: %v", err)
 		}
-		s.filterComments(&issueComments)
-		s.mergeIssues(&issueComments, now)
-	}
-}
-
-func (s *CommentStore) filterComments(issueComments *[]jiraBaseClient.Issue) {
-	if s.includePrivate {
-		return
-	}
-	for _, issue := range *issueComments {
-		var filteredCommentList []*jiraBaseClient.Comment
-		for _, comment := range issue.Fields.Comments.Comments {
-			if comment.Visibility.Value == "" {
-				filteredCommentList = append(filteredCommentList, comment)
-			} else {
-				filteredCommentList = append(filteredCommentList, &jiraBaseClient.Comment{Body: "<private comment>",
-					Author:  jiraBaseClient.User{DisplayName: "UNKNOWN"},
-					Created: comment.Created,
-					Updated: comment.Updated,
-					ID:      comment.ID,
-				})
-			}
+		if !s.includePrivate {
+			helpers.FilterIssueComments(&issueComments)
 		}
-		issue.Fields.Comments.Comments = filteredCommentList
+		s.mergeIssues(&issueComments, now)
 	}
 }
 
@@ -253,30 +234,37 @@ func (s *CommentStore) issueAdd(obj interface{}) {
 	s.queue.Add(issue.Name)
 }
 
-func (s *CommentStore) issueUpdate(obj interface{}) {
-	issue, ok := obj.(*Issue)
+func (s *CommentStore) issueUpdate(old, new interface{}) {
+	issue, ok := old.(*Issue)
 	if !ok {
 		return
 	}
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	a, _ := strconv.Atoi(issue.Info.ID)
-	existing, ok := s.Get(a)
+	update, ok := new.(*Issue)
 	if !ok {
 		return
 	}
-	if reflect.DeepEqual(issue.Info, existing.Info) {
-		return
-	}
-	existing = existing.DeepCopyObject().(*IssueComments)
-	existing.Info = issue.Info
-	if err := s.store.Update(existing); err != nil {
-		klog.Errorf("Unable to update issue from informer: %v", err)
-		return
-	}
-	if s.persistedStore != nil {
+	// Only update the issues that ResourceVersion is newer than what's in the Store
+	if update.ResourceVersion > issue.ResourceVersion {
+		s.lock.Lock()
+		defer s.lock.Unlock()
 		a, _ := strconv.Atoi(issue.Info.ID)
-		s.persistedStore.NotifyChanged(a)
+		existing, ok := s.Get(a)
+		if !ok {
+			return
+		}
+		if reflect.DeepEqual(issue.Info, existing.Info) {
+			return
+		}
+		existing = existing.DeepCopyObject().(*IssueComments)
+		existing.Info = issue.Info
+		if err := s.store.Update(existing); err != nil {
+			klog.Errorf("Unable to update issue from informer: %v", err)
+			return
+		}
+		if s.persistedStore != nil {
+			a, _ := strconv.Atoi(issue.Info.ID)
+			s.persistedStore.NotifyChanged(a)
+		}
 	}
 }
 

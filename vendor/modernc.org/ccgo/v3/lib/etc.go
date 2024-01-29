@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"sort"
-	"strings"
 
 	"modernc.org/cc/v3"
 )
@@ -109,53 +107,4 @@ func (s scope) take(t cc.StringID) string {
 			return r
 		}
 	}
-}
-
-func dumpLayout(t cc.Type, info *structInfo) string {
-	switch t.Kind() {
-	case cc.Struct, cc.Union:
-		// ok
-	default:
-		return t.String()
-	}
-
-	nf := t.NumField()
-	var a []string
-	w := 0
-	for i := 0; i < nf; i++ {
-		if n := len(t.FieldByIndex([]int{i}).Name().String()); n > w {
-			w = n
-		}
-	}
-	for i := 0; i < nf; i++ {
-		f := t.FieldByIndex([]int{i})
-		var bf cc.StringID
-		if f.IsBitField() {
-			if bfbf := f.BitFieldBlockFirst(); bfbf != nil {
-				bf = bfbf.Name()
-			}
-		}
-		a = append(a, fmt.Sprintf("%3d: %*q: BitFieldOffset %3v, BitFieldWidth %3v, IsBitField %5v, Mask: %#016x, off: %3v, pad %2v, BitFieldBlockWidth: %2d, BitFieldBlockFirst: %s, %v",
-			i, w+2, f.Name(), f.BitFieldOffset(), f.BitFieldWidth(),
-			f.IsBitField(), f.Mask(), f.Offset(), f.Padding(),
-			f.BitFieldBlockWidth(), bf, f.Type(),
-		))
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%v\n%s\n----\n", t, strings.Join(a, "\n"))
-	fmt.Fprintf(&b, "offs: %v\n", info.offs)
-	a = a[:0]
-	for k, v := range info.flds {
-		var b []string
-		for _, w := range v {
-			b = append(b, fmt.Sprintf("%q padBefore: %d ", w.Name(), info.padBefore[w]))
-		}
-		a = append(a, fmt.Sprintf("%4d %s", k, b))
-	}
-	sort.Strings(a)
-	for _, v := range a {
-		fmt.Fprintf(&b, "%s\n", v)
-	}
-	fmt.Fprintf(&b, "padAfter: %v\n", info.padAfter)
-	return b.String()
 }

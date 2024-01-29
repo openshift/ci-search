@@ -10,7 +10,7 @@ import (
 
 	"github.com/openshift/ci-search/metricdb"
 	"github.com/openshift/ci-search/pkg/httpwriter"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	_ "modernc.org/sqlite"
 )
 

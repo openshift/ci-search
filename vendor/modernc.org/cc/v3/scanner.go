@@ -434,7 +434,7 @@ func (s *scanner) next() (r byte) {
 		// (introducing new-line characters for end-of-line indicators)
 		// if necessary. Trigraph sequences are replaced by
 		// corresponding single-character internal representations.
-		if bytes.Contains(b, trigraphPrefix) {
+		if !s.ctx.cfg.DisableTrigraphs && bytes.Contains(b, trigraphPrefix) {
 			for _, v := range trigraphs {
 				b = bytes.Replace(b, v.from, v.to, -1)
 			}
@@ -744,7 +744,8 @@ func (s *scanner) parseLine(toks []token3) *ppLineDirective {
 		return &ppLineDirective{toks: toks}
 	default:
 		toks := s.scanLineToEOL(toks)
-		r := &ppLineDirective{toks: toks}
+		last := toks[len(toks)-1]
+		r := &ppLineDirective{toks: toks, nextPos: int(last.pos) + len(last.src.String())}
 		toks = toks[:len(toks)-1] // sans new-line
 		toks = ltrim3(toks)
 		toks = toks[1:] // Skip '#'
@@ -1177,10 +1178,6 @@ func (c *ppCache) getFile(ctx *context, name string, sys bool, doNotCache bool) 
 
 	size := int(fi.Size())
 	if !filepath.IsAbs(name) { // Never cache relative paths
-		if isTesting {
-			panic(internalError())
-		}
-
 		f, err := ctx.openFile(name, sys)
 		if err != nil {
 			return nil, err

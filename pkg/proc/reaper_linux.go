@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // parseProcForZombies parses the current procfs mounted at /proc

@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build amd64 arm64
+//go:build amd64 || arm64 || ppc64le || riscv64 || s390x
+// +build amd64 arm64 ppc64le riscv64 s390x
 
 package libc // import "modernc.org/libc"
+
+const (
+	heapSize = 2 << 30 // Adjust for your debugging session requirements and system RAM size.
+)
 
 type (
 	// RawMem represents the biggest byte array the runtime can handle

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/ci-search/pkg/httpwriter"
 	"github.com/openshift/ci-search/prow"

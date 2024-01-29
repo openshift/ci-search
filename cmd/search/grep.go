@@ -15,7 +15,7 @@ import (
 	"syscall"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 var ErrMaxBytes = fmt.Errorf("reached maximum search length, more results not shown")
@@ -78,12 +78,12 @@ type GrepFunc func(name string, search string, lines []bytes.Buffer, moreLines i
 // executeGrep search for matches to index and, for each match found,
 // calls fn with the following arguments:
 //
-// * name, the name of the matching file, as a slash-slash-separated path
-//   resolved relative to the index base.
-// * search, the string from Index.Search which resulted in the callback.
-// * lines, the match with its surrounding context.
-// * moreLines, the number of elided lines, when the match and context
-//   is truncated due to excessive length.
+//   - name, the name of the matching file, as a slash-slash-separated path
+//     resolved relative to the index base.
+//   - search, the string from Index.Search which resulted in the callback.
+//   - lines, the match with its surrounding context.
+//   - moreLines, the number of elided lines, when the match and context
+//     is truncated due to excessive length.
 func executeGrep(ctx context.Context, gen CommandGenerator, index *Index, jobNames sets.String, fn GrepFunc) error {
 	for _, search := range index.Search {
 		if err := executeGrepSingle(ctx, gen, index, search, jobNames, fn); err != nil {

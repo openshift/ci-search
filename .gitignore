@@ -3,6 +3,7 @@
 /build-indexer
 /search
 /search.db
+/jira-watcher-controller
 
 .scannerwork/
 coverage.out

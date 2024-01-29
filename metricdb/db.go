@@ -13,7 +13,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/openshift/ci-search/prow"
 	gcpoption "google.golang.org/api/option"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 type DB struct {

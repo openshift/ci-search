@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 type Client struct {
@@ -168,11 +168,11 @@ func readJSONIntoObject(ctx context.Context, retries int, client *http.Client, f
 func truncateBody(body string) string {
 	max := 0
 	switch {
-	case bool(klog.V(10)):
+	case klog.V(10).Enabled():
 		return body
-	case bool(klog.V(9)):
+	case klog.V(9).Enabled():
 		max = 10240
-	case bool(klog.V(8)):
+	case klog.V(8).Enabled():
 		max = 1024
 	}
 
@@ -187,7 +187,7 @@ func truncateBody(body string) string {
 // allocating a new string for the body output unless necessary. Uses a simple heuristic to determine
 // whether the body is printable.
 func glogBody(prefix string, body []byte) {
-	if klog.V(8) {
+	if klog.V(8).Enabled() {
 		if bytes.IndexFunc(body, func(r rune) bool {
 			return r < 0x0a
 		}) != -1 {

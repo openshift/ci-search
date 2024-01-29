@@ -16,9 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	jiraClient "k8s.io/test-infra/prow/jira"
 
+	helpers "github.com/openshift/ci-search/pkg/jira"
 	"github.com/openshift/ci-search/walk"
 )
 
@@ -27,10 +28,6 @@ type CommentDiskStore struct {
 	maxAge time.Duration
 
 	queue workqueue.Interface
-}
-
-type CommentAccessor interface {
-	Get(id int) (*IssueComments, bool)
 }
 
 func NewCommentDiskStore(path string, maxAge time.Duration) *CommentDiskStore {
@@ -169,7 +166,6 @@ func (s *CommentDiskStore) DeleteIssue(bug *Issue) error {
 }
 
 func (s *CommentDiskStore) CloseIssue(bug *IssueComments) error {
-
 	clone := bug.DeepCopyObject().(*IssueComments)
 	clone.Info.Fields.Status.Name = jiraClient.StatusClosed
 	if err := s.write(&Issue{ObjectMeta: clone.ObjectMeta, Info: clone.Info}, clone); err != nil {
@@ -180,57 +176,6 @@ func (s *CommentDiskStore) CloseIssue(bug *IssueComments) error {
 func (s *CommentDiskStore) pathForBug(bug *Issue) (string, string) {
 	return filepath.Join(s.base, fmt.Sprintf("z-issue__%s__%s", bug.Info.Key, bug.Info.ID)),
 		filepath.Join(s.base, fmt.Sprintf("issue__%s__%s", bug.Info.Key, bug.Info.ID))
-}
-
-func lineSafe(s string) string {
-	return strings.TrimSpace(strings.Replace(s, "\n", " ", -1))
-}
-
-func resolutionFieldName(s *jiraBaseClient.Resolution) string {
-	if s != nil {
-		resolutionDetails := s.Name
-		return strings.TrimSpace(strings.Replace(resolutionDetails, "\n", " ", -1))
-	}
-	return ""
-}
-
-func statusFieldName(s *jiraBaseClient.Status) string {
-	if s != nil {
-		statusDetails := s.Name
-		return strings.TrimSpace(strings.Replace(statusDetails, "\n", " ", -1))
-	}
-	return ""
-}
-
-func priorityFieldName(s *jiraBaseClient.Priority) string {
-	if s != nil {
-		priorityDetails := s.Name
-		return strings.TrimSpace(strings.Replace(priorityDetails, "\n", " ", -1))
-	}
-	return ""
-}
-
-func userFieldDisplayName(s *jiraBaseClient.User) string {
-	if s != nil {
-		userDetails := s.DisplayName
-		return strings.TrimSpace(strings.Replace(userDetails, "\n", " ", -1))
-	}
-	return ""
-}
-
-func arrayLineSafe(arr []string, delim string) string {
-	inputs := make([]string, 0, len(arr))
-	for _, s := range arr {
-		inputs = append(inputs, lineSafe(s))
-	}
-	return strings.Join(inputs, delim)
-}
-
-func commentAuthor(authorDisplayName string) string {
-	if authorDisplayName == "" {
-		return "ANONYMOUS"
-	}
-	return strings.TrimSpace(authorDisplayName)
 }
 
 func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
@@ -247,15 +192,15 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 		w,
 		"Issue %s: %s\nDescription: %s \nStatus: %s\nResolution: %s\nPriority: %s\nCreator: %s\nAssigned To: %s\nLabels: %s\nTarget Version: %s\n---\n",
 		issue.Info.ID,
-		lineSafe(issue.Info.Fields.Summary),
-		lineSafe(issue.Info.Fields.Description),
-		statusFieldName(issue.Info.Fields.Status),
-		resolutionFieldName(issue.Info.Fields.Resolution),
-		priorityFieldName(issue.Info.Fields.Priority),
-		userFieldDisplayName(issue.Info.Fields.Creator),
-		userFieldDisplayName(issue.Info.Fields.Assignee),
-		arrayLineSafe(issue.Info.Fields.Labels, ", "),
-		arrayLineSafe(IssueTargetVersionIDs(issue.Info), ", "),
+		helpers.LineSafe(issue.Info.Fields.Summary),
+		helpers.LineSafe(issue.Info.Fields.Description),
+		helpers.StatusFieldName(issue.Info.Fields.Status),
+		helpers.ResolutionFieldName(issue.Info.Fields.Resolution),
+		helpers.PriorityFieldName(issue.Info.Fields.Priority),
+		helpers.UserFieldDisplayName(issue.Info.Fields.Creator),
+		helpers.UserFieldDisplayName(issue.Info.Fields.Assignee),
+		helpers.ArrayLineSafeString(issue.Info.Fields.Labels, ", "),
+		helpers.ArrayLineSafeString(IssueTargetVersionIDs(issue.Info), ", "),
 		//TODO these fields might or might not contain usefully information. Check what makes sense to keep, and what the requirements are
 		//arrayLineSafe(fixVersionJira(issue.Info), ", "),
 		//arrayLineSafe(versionsJira(issue.Info), ", "),
@@ -273,7 +218,7 @@ func (s *CommentDiskStore) write(issue *Issue, comments *IssueComments) error {
 			w,
 			"Comment %s by %s at %s\n%s\n\x1e",
 			comment.ID,
-			commentAuthor(comment.Author.DisplayName),
+			helpers.CommentAuthor(comment.Author.DisplayName),
 			comment.Created,
 			escapedText,
 		); err != nil {

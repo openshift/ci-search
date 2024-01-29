@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build libc.dmesg
 // +build libc.dmesg
 
 package libc // import "modernc.org/libc"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const dmesgs = true
@@ -25,6 +27,8 @@ func init() {
 	if logf, err = os.OpenFile("/tmp/libc.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_SYNC, 0644); err != nil {
 		panic(err.Error())
 	}
+
+	dmesg("%v", time.Now())
 }
 
 func dmesg(s string, args ...interface{}) {
