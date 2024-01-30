@@ -182,6 +182,7 @@ func (w *periodicWatcher) run() {
 			return
 		}
 		if len(issues) == 0 {
+			klog.V(5).Infof("Watch observered no changes")
 			return
 		}
 
