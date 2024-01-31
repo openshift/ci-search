@@ -171,9 +171,18 @@ func (w *periodicWatcher) run() {
 		return
 	}
 
+	// Timestamps for querying Jira needs to be in EST...
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		klog.Errorf("Unable to calculate the time in EST: %v", err)
+		// This sets the default time to UTC and the watcher will *never* return any issues,
+		// but the lister will re-sync every couple hours regardless...
+		location = &time.Location{}
+	}
+
 	wait.Until(func() {
 		args := w.args
-		args.LastChangeTime = rv.Time
+		args.LastChangeTime = rv.Time.In(location)
 		issues, err := w.lw.client.SearchIssues(context.Background(), args)
 		if err != nil {
 			klog.Errorf("Watcher search issues error: %v", err)
