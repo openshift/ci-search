@@ -3,7 +3,6 @@ package jira_watcher_controller
 import (
 	"context"
 	"fmt"
-	jiraBaseClient "github.com/andygrunwald/go-jira"
 	"github.com/openshift/ci-search/jira"
 	"github.com/openshift/ci-search/pkg/bigquery"
 	helpers "github.com/openshift/ci-search/pkg/jira"
@@ -127,6 +126,8 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 		l = c.maxBatch
 	}
 
+	var keys []interface{}
+	keys = make([]interface{}, 0, l)
 	var issueIDs []int
 	issueIDs = make([]int, 0, l)
 	for l > 0 {
@@ -134,39 +135,54 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 		if quit {
 			return false
 		}
-		c.queue.Done(k)
 		id, err := strconv.Atoi(k.(string))
 		if err != nil {
 			klog.Warningf("comment id %q was not parsable to int: %v", k.(string), err)
+			c.queue.Forget(k)
+			c.queue.Done(k)
 			continue
 		}
+		keys = append(keys, k)
 		issueIDs = append(issueIDs, id)
 		l--
 	}
 
-	klog.V(5).Infof("Fetching %d comments from Jira", len(issueIDs))
-	issueComments, err := c.jiraClient.IssueCommentsByID(ctx, issueIDs...)
-	if err != nil {
-		klog.Warningf("Failed to retrieve comments from Jira: %v", err)
-	}
-	if !c.showPrivateMessages {
-		helpers.FilterIssueComments(&issueComments)
-	}
-
 	now := time.Now()
-	err = c.sync(ctx, &issueComments, now)
+	err := c.sync(ctx, issueIDs, now)
 	if err == nil {
 		klog.V(5).Infof("Successfully synced %d issues with bigquery", len(issueIDs))
+		// Cleanup all the keys that we just processed...
+		for _, k := range keys {
+			c.queue.Forget(k)
+			c.queue.Done(k)
+		}
 		return true
 	}
 
 	utilruntime.HandleError(fmt.Errorf("unable to sync issues with bigquery: %w", err))
+	// Ensure that all the keys that we just processed are re-queued...
+	for _, k := range keys {
+		c.queue.AddRateLimited(k)
+		c.queue.Done(k)
+	}
+
 	return true
 }
 
-func (c *JiraWatcherController) sync(ctx context.Context, issueComments *[]jiraBaseClient.Issue, timestamp time.Time) error {
+func (c *JiraWatcherController) sync(ctx context.Context, issueIDs []int, timestamp time.Time) error {
 	var tickets []Ticket
-	for _, issue := range *issueComments {
+
+	klog.V(5).Infof("Fetching %d comments from Jira", len(issueIDs))
+	issueComments, err := c.jiraClient.IssueCommentsByID(ctx, issueIDs...)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve comments from Jira: %v", err)
+	}
+
+	if !c.showPrivateMessages {
+		helpers.FilterIssueComments(&issueComments)
+	}
+
+	for _, issue := range issueComments {
 		id, err := strconv.Atoi(issue.ID)
 		if err != nil {
 			klog.Errorf("Unable to determine issue ID from: %s", issue.ID)
@@ -193,8 +209,7 @@ func (c *JiraWatcherController) sync(ctx context.Context, issueComments *[]jiraB
 			klog.V(5).Infof("Syncing %d issues to bigquery", len(tickets))
 			err := c.bigqueryClient.WriteRows(ctx, BigqueryDatasetId, BigqueryTableId, tickets)
 			if err != nil {
-				klog.Errorf("unable to write to bigquery: %v", err)
-				return err
+				return fmt.Errorf("unable to write to bigquery: %v", err)
 			}
 		}
 	}

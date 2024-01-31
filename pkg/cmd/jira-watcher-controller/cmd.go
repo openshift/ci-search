@@ -118,7 +118,7 @@ func (o *Options) Run(ctx context.Context) error {
 	jiraInformer := jira.NewInformer(
 		c,
 		10*time.Minute, // Time before watcher starts
-		1*time.Hour,    // How often to resync from jira
+		2*time.Hour,    // How often to resync from jira
 		0,              // Never resync items already in store
 		func(metav1.ListOptions) jira.SearchIssuesArgs {
 			return jira.SearchIssuesArgs{
