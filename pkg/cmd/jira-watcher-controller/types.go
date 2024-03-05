@@ -59,6 +59,7 @@ type Ticket struct {
 	TargetVersions []TargetVersion `bigquery:"target_versions"`
 	Resolution     Resolution      `bigquery:"resolution"`
 	Comments       []Comment       `bigquery:"comments"`
+	Summary        string          `bigquery:"summary"`
 }
 
 func (t *Ticket) Save() (map[string]bigquery.Value, string, error) {
@@ -74,6 +75,7 @@ func (t *Ticket) Save() (map[string]bigquery.Value, string, error) {
 		"target_version": t.TargetVersions,
 		"resolution":     t.Resolution,
 		"comments":       t.Comments,
+		"summary":        t.Summary,
 	}, bigquery.NoDedupeID, nil
 }
 
@@ -93,6 +95,7 @@ func convertToTicket(issueComments *jira.IssueComments, timestamp time.Time) Tic
 		TargetVersions: getTargetVersions(issueComments.Info),
 		Resolution:     getResolution(issueComments.Info.Fields.Resolution),
 		Comments:       getComments(issueComments.Comments),
+		Summary:        helpers.LineSafe(issueComments.Info.Fields.Summary),
 	}
 
 	return ticket
