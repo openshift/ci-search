@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	jiraClient "k8s.io/test-infra/prow/jira"
+	jiraClient "sigs.k8s.io/prow/prow/jira"
 
 	"github.com/openshift/ci-search/bugzilla"
 	"github.com/openshift/ci-search/jira"

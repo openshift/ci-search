@@ -12,8 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/pkg/version"
 	"k8s.io/klog/v2"
-	jiraClient "k8s.io/test-infra/prow/jira"
 	"os"
+	jiraClient "sigs.k8s.io/prow/prow/jira"
 	"time"
 )
 

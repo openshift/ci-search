@@ -35,9 +35,9 @@ require (
 	k8s.io/client-go v11.0.1-0.20190805182717-6502b5e7b1b5+incompatible
 	k8s.io/component-base v0.29.0
 	k8s.io/klog/v2 v2.110.1
-	k8s.io/test-infra v0.0.0-20230919194854-a4926a4d0269
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
 	modernc.org/sqlite v1.18.2
+	sigs.k8s.io/prow v0.0.0-20240327001858-3b186849a5cf
 	vbom.ml/util v0.0.0-20180919145318-efcd4e0f9787
 )
 
