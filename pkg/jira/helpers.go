@@ -2,7 +2,7 @@ package jira
 
 import (
 	jiraBaseClient "github.com/andygrunwald/go-jira"
-	jiraClient "k8s.io/test-infra/prow/jira"
+	jiraClient "sigs.k8s.io/prow/prow/jira"
 	"strings"
 )
 
