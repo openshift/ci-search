@@ -43,7 +43,7 @@ func NewJiraWatcherController(jiraClient *jira.Client, jiraInformer cache.Shared
 		rateLimit:           rate.NewLimiter(rate.Every(15*time.Second), 3),
 	}
 
-	c.queue = workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(), workqueue.RateLimitingQueueConfig{Name: "ProwJobStatusController"})
+	c.queue = workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(), workqueue.RateLimitingQueueConfig{Name: "JiraWatcherController"})
 	c.cachesToSync = append(c.cachesToSync, jiraInformer.HasSynced)
 
 	_, err := jiraInformer.AddEventHandler(&cache.ResourceEventHandlerFuncs{
@@ -170,7 +170,7 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 }
 
 func (c *JiraWatcherController) sync(ctx context.Context, issueIDs []int, timestamp time.Time) error {
-	var tickets []Ticket
+	var tickets []*Ticket
 
 	klog.V(5).Infof("Fetching %d comments from Jira", len(issueIDs))
 	issueComments, err := c.jiraClient.IssueCommentsByID(ctx, issueIDs...)
