@@ -2,10 +2,14 @@ package jira_watcher_controller
 
 import (
 	"cloud.google.com/go/bigquery"
+	"encoding/json"
+	"fmt"
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	"github.com/openshift/ci-search/jira"
 	helpers "github.com/openshift/ci-search/pkg/jira"
 	"k8s.io/klog/v2"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -52,23 +56,36 @@ type Component struct {
 	Name string `bigquery:"name"`
 }
 
+type CustomField struct {
+	FieldName       string  `bigquery:"field_name" json:"field_name,omitempty"`
+	ID              string  `bigquery:"id" json:"id,omitempty"`
+	Name            string  `bigquery:"name" json:"name,omitempty"`
+	Key             string  `bigquery:"key" json:"key,omitempty"`
+	DisplayName     string  `bigquery:"display_name" json:"display_name,omitempty"`
+	Description     string  `bigquery:"description" json:"description,omitempty"`
+	Value           string  `bigquery:"value" json:"value,omitempty"`
+	Votes           float64 `bigquery:"votes" json:"votes,omitempty"`
+	StructuredValue string  `bigquery:"structured_value" json:"structured_value,omitempty"`
+}
+
 type Ticket struct {
-	RecordCreated   time.Time   `bigquery:"record_created"`
-	Issue           Issue       `bigquery:"issue"`
-	Description     string      `bigquery:"description"`
-	Creator         string      `bigquery:"creator"`
-	Assignee        string      `bigquery:"assignee"`
-	Status          Status      `bigquery:"status"`
-	Priority        Priority    `bigquery:"priority"`
-	Labels          []string    `bigquery:"labels"`
-	TargetVersions  []Version   `bigquery:"target_versions"`
-	Resolution      Resolution  `bigquery:"resolution"`
-	Comments        []Comment   `bigquery:"comments"`
-	Summary         string      `bigquery:"summary"`
-	Components      []Component `bigquery:"components"`
-	FixVersions     []Version   `bigquery:"fix_versions"`
-	AffectsVersions []Version   `bigquery:"affects_versions"`
-	LastChangedTime time.Time   `bigquery:"last_changed_time"`
+	RecordCreated   time.Time     `bigquery:"record_created"`
+	Issue           Issue         `bigquery:"issue"`
+	Description     string        `bigquery:"description"`
+	Creator         string        `bigquery:"creator"`
+	Assignee        string        `bigquery:"assignee"`
+	Status          Status        `bigquery:"status"`
+	Priority        Priority      `bigquery:"priority"`
+	Labels          []string      `bigquery:"labels"`
+	TargetVersions  []Version     `bigquery:"target_versions"`
+	Resolution      Resolution    `bigquery:"resolution"`
+	Comments        []Comment     `bigquery:"comments"`
+	Summary         string        `bigquery:"summary"`
+	Components      []Component   `bigquery:"components"`
+	FixVersions     []Version     `bigquery:"fix_versions"`
+	AffectsVersions []Version     `bigquery:"affects_versions"`
+	LastChangedTime time.Time     `bigquery:"last_changed_time"`
+	CustomFields    []CustomField `bigquery:"custom_fields"`
 }
 
 func (t *Ticket) Save() (map[string]bigquery.Value, string, error) {
@@ -81,7 +98,7 @@ func (t *Ticket) Save() (map[string]bigquery.Value, string, error) {
 		"status":            t.Status,
 		"priority":          t.Priority,
 		"labels":            t.Labels,
-		"target_version":    t.TargetVersions,
+		"target_versions":   t.TargetVersions,
 		"resolution":        t.Resolution,
 		"comments":          t.Comments,
 		"summary":           t.Summary,
@@ -89,11 +106,12 @@ func (t *Ticket) Save() (map[string]bigquery.Value, string, error) {
 		"fix_versions":      t.FixVersions,
 		"affects_versions":  t.AffectsVersions,
 		"last_changed_time": t.LastChangedTime,
+		"custom_fields":     t.CustomFields,
 	}, bigquery.NoDedupeID, nil
 }
 
-func convertToTicket(issueComments *jira.IssueComments, timestamp time.Time) Ticket {
-	ticket := Ticket{
+func convertToTicket(issueComments *jira.IssueComments, timestamp time.Time) *Ticket {
+	return &Ticket{
 		RecordCreated: timestamp,
 		Issue: Issue{
 			ID:  issueComments.Info.ID,
@@ -113,9 +131,8 @@ func convertToTicket(issueComments *jira.IssueComments, timestamp time.Time) Tic
 		FixVersions:     getFixVersions(issueComments.Info.Fields.FixVersions),
 		AffectsVersions: getAffectsVersions(issueComments.Info.Fields.AffectsVersions),
 		LastChangedTime: getUpdatedTime(issueComments.Info.Fields.Updated),
+		CustomFields:    getCustomFields(issueComments.Info),
 	}
-
-	return ticket
 }
 
 func getStatus(s *jiraBaseClient.Status) Status {
@@ -152,13 +169,13 @@ func getResolution(r *jiraBaseClient.Resolution) Resolution {
 }
 
 func getTargetVersions(i jiraBaseClient.Issue) []Version {
-	var versions []Version
 	targetVersions, err := helpers.IssueTargetVersions(i)
 	if err != nil {
 		return nil
 	}
-	for _, version := range *targetVersions {
-		versions = append(versions, Version{
+	versions := make([]Version, 0, len(*targetVersions))
+	for i, version := range *targetVersions {
+		versions = slices.Insert(versions, i, Version{
 			ID:   helpers.LineSafe(version.ID),
 			Name: helpers.LineSafe(version.Name),
 		})
@@ -167,8 +184,7 @@ func getTargetVersions(i jiraBaseClient.Issue) []Version {
 }
 
 func getComments(issueComments []*jiraBaseClient.Comment) []Comment {
-	var comments []Comment
-
+	comments := make([]Comment, 0, len(issueComments))
 	for _, comment := range issueComments {
 		escapedText := strings.ReplaceAll(strings.ReplaceAll(comment.Body, "\x00", " "), "\x1e", " ")
 		comments = append(comments, Comment{
@@ -178,7 +194,6 @@ func getComments(issueComments []*jiraBaseClient.Comment) []Comment {
 			Message: escapedText,
 		})
 	}
-
 	return comments
 }
 
@@ -192,9 +207,9 @@ func getCreatedTime(created string) time.Time {
 }
 
 func getComponents(c []*jiraBaseClient.Component) []Component {
-	var components []Component
-	for _, component := range c {
-		components = append(components, Component{
+	components := make([]Component, 0, len(c))
+	for i, component := range c {
+		components = slices.Insert(components, i, Component{
 			ID:   component.ID,
 			Name: component.Name,
 		})
@@ -203,9 +218,9 @@ func getComponents(c []*jiraBaseClient.Component) []Component {
 }
 
 func getFixVersions(fixVersions []*jiraBaseClient.FixVersion) []Version {
-	var versions []Version
-	for _, version := range fixVersions {
-		versions = append(versions, Version{
+	versions := make([]Version, 0, len(fixVersions))
+	for i, version := range fixVersions {
+		versions = slices.Insert(versions, i, Version{
 			ID:   version.ID,
 			Name: version.Name,
 		})
@@ -214,9 +229,9 @@ func getFixVersions(fixVersions []*jiraBaseClient.FixVersion) []Version {
 }
 
 func getAffectsVersions(affectsVersions []*jiraBaseClient.AffectsVersion) []Version {
-	var versions []Version
-	for _, version := range affectsVersions {
-		versions = append(versions, Version{
+	versions := make([]Version, 0, len(affectsVersions))
+	for i, version := range affectsVersions {
+		versions = slices.Insert(versions, i, Version{
 			ID:   version.ID,
 			Name: version.Name,
 		})
@@ -234,4 +249,94 @@ func getUpdatedTime(updated jiraBaseClient.Time) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func getCustomFields(i jiraBaseClient.Issue) []CustomField {
+	var customFields []CustomField
+	for k, v := range i.Fields.Unknowns {
+		if v == nil {
+			continue
+		}
+		field := processCustomFieldValue(k, v)
+		if field != nil {
+			customFields = append(customFields, *field)
+		}
+	}
+	return customFields
+}
+
+func processCustomFieldValue(name string, value interface{}) *CustomField {
+	var field *CustomField
+	var fields []CustomField
+	var valueStr string
+
+	switch t := value.(type) {
+	case int:
+		valueStr = fmt.Sprintf("%d", value)
+	case float64:
+		valueStr = fmt.Sprintf("%f", value)
+	case string:
+		valueStr = fmt.Sprintf("%s", value)
+	case bool:
+		valueStr = fmt.Sprintf("%t", value)
+	case []interface{}:
+		for _, n := range t {
+			cf := getCustomField(name, n)
+			if cf != nil {
+				fields = append(fields, *cf)
+			}
+		}
+	case map[string]interface{}:
+		field = getCustomField(name, value)
+	default:
+		var r = reflect.TypeOf(t)
+		klog.Warningf("Unknown CustomField type: %v", r)
+		return nil
+	}
+
+	switch {
+	case field != nil:
+		field.FieldName = name
+		return field
+	case fields != nil && len(fields) > 0:
+		return &CustomField{
+			FieldName:       name,
+			StructuredValue: generateBigQueryJson(fields),
+		}
+	case len(valueStr) > 0:
+		return &CustomField{
+			FieldName: name,
+			Value:     valueStr,
+		}
+	default:
+		return nil
+	}
+}
+
+func getCustomField(name string, value interface{}) *CustomField {
+	field := &CustomField{}
+	switch v := value.(type) {
+	case string:
+		field.Value = v
+	default:
+		bytes, err := json.Marshal(value)
+		if err != nil {
+			klog.Errorf("failed to process the custom field %s. Error : %v", name, err)
+			return nil
+		}
+		if err = json.Unmarshal(bytes, field); err != nil {
+			klog.Errorf("failed to unmarshall the json to struct for %s. Error: %v", name, err)
+			return nil
+		}
+	}
+	return field
+}
+
+func generateBigQueryJson(src interface{}) string {
+	data, err := json.Marshal(src)
+	if err != nil {
+		klog.Errorf("failed to marshall bigquery json. Error: %v", err)
+		return ""
+	}
+	return string(data)
 }
