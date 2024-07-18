@@ -38,7 +38,7 @@ func NewJiraWatcherControllerCommand(name string) *cobra.Command {
 	o := &Options{
 		BigQueryRefreshInterval: 1 * time.Minute,
 		JiraURL:                 "https://issues.redhat.com",
-		JiraSearch:              "(project=OCPBUGS&updated>='-14d'&affectedVersion IN versionMatch('4\\\\.\\\\d+')&level IN (null)) OR (project=TRT&updated>='-14d'&level IN (null))",
+		JiraSearch:              "(project=OCPBUGS&updated>='-60d'&affectedVersion IN versionMatch('4\\\\.\\\\d+')&level IN (null)) OR (project=TRT&updated>='-60d'&level IN (null))",
 	}
 
 	ccc := controllercmd.NewControllerCommandConfig("jira-watcher-controller", version.Get(), func(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -117,7 +117,7 @@ func (o *Options) Run(ctx context.Context) error {
 	}
 	jiraInformer := jira.NewInformer(
 		c,
-		10*time.Minute, // Time before watcher starts
+		15*time.Minute, // Time before watcher starts
 		2*time.Hour,    // How often to resync from jira
 		0,              // Never resync items already in store
 		func(metav1.ListOptions) jira.SearchIssuesArgs {
