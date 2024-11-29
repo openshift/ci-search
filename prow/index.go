@@ -121,8 +121,6 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
 			wait.UntilWithContext(ctx, func(ctx context.Context) {
 				for {
-					// temporary log the queue length
-					klog.Infof("Prow queue length: %d", s.queue.Len())
 					obj, done := s.queue.Get()
 					if done {
 						return
