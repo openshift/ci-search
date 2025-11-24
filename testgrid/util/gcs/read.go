@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/url"
 	"regexp"
 	"sort"
@@ -155,11 +155,12 @@ func matchesSuite(obj *storage.ObjectAttrs) bool {
 // parseSuitesMeta returns the metadata for this junit file (nil for a non-junit file).
 //
 // Expected format: junit_context_20180102-1256-07.xml
-// Results in {
-//   "Context": "context",
-//   "Timestamp": "20180102-1256",
-//   "Thread": "07",
-// }
+//
+//	Results in {
+//	  "Context": "context",
+//	  "Timestamp": "20180102-1256",
+//	  "Thread": "07",
+//	}
 func parseSuitesMeta(obj *storage.ObjectAttrs) map[string]string {
 	mat := re.FindStringSubmatch(obj.Name)
 	if mat == nil {
@@ -253,7 +254,7 @@ func readSuites(ctx context.Context, obj *storage.ObjectHandle) (*junit.Suites, 
 		return nil, fmt.Errorf("open: %v", err)
 	}
 
-	buf, err := ioutil.ReadAll(reader)
+	buf, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("read: %v", err)
 	}

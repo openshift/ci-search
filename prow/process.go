@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -219,7 +218,7 @@ func NewAccumulator(base string, build *gcs.Build, modifiedBefore time.Time) (*L
 	}
 
 	exists := make(map[string]struct{})
-	files, _ := ioutil.ReadDir(buildPath)
+	files, _ := os.ReadDir(buildPath)
 	for _, file := range files {
 		exists[filepath.Base(file.Name())] = struct{}{}
 	}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -203,7 +202,7 @@ func runSingleCommand(ctx context.Context, cmd *exec.Cmd, pathPrefix string, ind
 	}
 
 	defer func() {
-		n, err := io.Copy(ioutil.Discard, pr)
+		n, err := io.Copy(io.Discard, pr)
 		if n > 0 || (err != nil && err != io.EOF) {
 			klog.Errorf("Unread input %d: %v", n, err)
 		}
