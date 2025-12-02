@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"net/http"
 	"net/url"
@@ -74,20 +73,20 @@ func readJSONIntoObject(ctx context.Context, retries int, client *http.Client, f
 		}
 		if err := func() error {
 			defer resp.Body.Close()
-			defer io.Copy(ioutil.Discard, resp.Body)
+			defer io.Copy(io.Discard, resp.Body)
 			contentType := resp.Header.Get("Content-Type")
 			mediaType, _, err := mime.ParseMediaType(contentType)
 			if err != nil {
 				return fmt.Errorf("unrecognized content type from Bugzilla API: %s: %v", contentType, err)
 			}
 			if resp.StatusCode != 200 {
-				data, _ := ioutil.ReadAll(&io.LimitedReader{N: 2048, R: resp.Body})
+				data, _ := io.ReadAll(&io.LimitedReader{N: 2048, R: resp.Body})
 				return fmt.Errorf("unknown client error %d: %q", resp.StatusCode, data)
 			}
 			if mediaType != "application/json" {
 				return fmt.Errorf("unrecognized 200 response from Prow API: %s", contentType)
 			}
-			data, err := ioutil.ReadAll(resp.Body)
+			data, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return err
 			}

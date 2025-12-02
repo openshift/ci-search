@@ -1,8 +1,6 @@
 package jira
 
 import (
-	"io/ioutil"
-	"k8s.io/utils/diff"
 	"os"
 	"reflect"
 	"strconv"
@@ -12,6 +10,7 @@ import (
 
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/diff"
 )
 
 func TestCommentDiskStore_write(t *testing.T) {
@@ -126,7 +125,7 @@ func TestCommentDiskStore_write(t *testing.T) {
 		t.Fatal(err)
 	}
 	tempPath, path := s.pathForBug(issue)
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

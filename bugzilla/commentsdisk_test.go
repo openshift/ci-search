@@ -1,7 +1,6 @@
 package bugzilla
 
 import (
-	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestCommentDiskStore_write(t *testing.T) {
-	dir, err := ioutil.TempDir("", "test")
+	dir, err := os.MkdirTemp("", "test")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -31,7 +30,7 @@ import (
 )
 
 func read(r io.Reader) (*Configuration, error) {
-	buf, err := ioutil.ReadAll(r)
+	buf, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config: %v", err)
 	}

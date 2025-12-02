@@ -3,7 +3,6 @@ package jira
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"testing"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestCommentStore(t *testing.T) {
-	dir, err := ioutil.TempDir("", "disk")
+	dir, err := os.MkdirTemp("", "disk")
 	if err != nil {
 		t.Fatal(err)
 	}

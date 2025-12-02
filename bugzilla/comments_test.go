@@ -2,7 +2,6 @@ package bugzilla
 
 import (
 	"context"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,7 +16,7 @@ import (
 )
 
 func TestCommentStore(t *testing.T) {
-	dir, err := ioutil.TempDir("", "disk")
+	dir, err := os.MkdirTemp("", "disk")
 	if err != nil {
 		t.Fatal(err)
 	}
