@@ -68,7 +68,7 @@ func StartPeriodicReaper(period int64) {
 				klog.V(4).Infof("Reaped: %v", zs)
 				zs, err = parseProcForZombies()
 				if err != nil {
-					klog.V(4).Infof(err.Error())
+					klog.V(4).Infof("Unable to parse /proc for zombies: %v", err.Error())
 					continue
 				}
 				time.Sleep(time.Duration(period) * time.Second)

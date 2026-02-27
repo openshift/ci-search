@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"k8s.io/klog/v2"
-	jiraClient "sigs.k8s.io/prow/prow/jira"
+	jiraClient "sigs.k8s.io/prow/pkg/jira"
 )
 
 func init() {

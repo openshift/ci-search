@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/pkg/version"
 	"k8s.io/klog/v2"
 	"os"
-	jiraClient "sigs.k8s.io/prow/prow/jira"
+	jiraClient "sigs.k8s.io/prow/pkg/jira"
 	"time"
 )
 

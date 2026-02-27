@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	jiraClient "sigs.k8s.io/prow/prow/jira"
+	jiraClient "sigs.k8s.io/prow/pkg/jira"
 )
 
 func TestListWatcher(t *testing.T) {
