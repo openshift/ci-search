@@ -22,6 +22,7 @@
 package civil
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"time"
 )
@@ -86,6 +87,18 @@ func (d Date) AddDays(n int) Date {
 	return DateOf(d.In(time.UTC).AddDate(0, 0, n))
 }
 
+// AddMonths returns the date that is n months in the future.
+// n can also be negative to go into the past.
+func (d Date) AddMonths(n int) Date {
+	return DateOf(d.In(time.UTC).AddDate(0, n, 0))
+}
+
+// AddYears returns the date that is n years in the future.
+// n can also be negative to go into the past.
+func (d Date) AddYears(n int) Date {
+	return DateOf(d.In(time.UTC).AddDate(n, 0, 0))
+}
+
 // DaysSince returns the signed number of days between the date and s, not including the end day.
 // This is the inverse operation to AddDays.
 func (d Date) DaysSince(s Date) (days int) {
@@ -111,9 +124,25 @@ func (d Date) After(d2 Date) bool {
 	return d2.Before(d)
 }
 
+// Compare compares d and d2. If d is before d2, it returns -1;
+// if d is after d2, it returns +1; otherwise it returns 0.
+func (d Date) Compare(d2 Date) int {
+	if d.Before(d2) {
+		return -1
+	} else if d.After(d2) {
+		return +1
+	}
+	return 0
+}
+
 // IsZero reports whether date fields are set to their default value.
 func (d Date) IsZero() bool {
 	return (d.Year == 0) && (int(d.Month) == 0) && (d.Day == 0)
+}
+
+// Weekday returns the day of the week for the date.
+func (d Date) Weekday() time.Weekday {
+	return d.In(time.UTC).Weekday()
 }
 
 // MarshalText implements the encoding.TextMarshaler interface.
@@ -128,6 +157,46 @@ func (d *Date) UnmarshalText(data []byte) error {
 	var err error
 	*d, err = ParseDate(string(data))
 	return err
+}
+
+// Value implements the database/sql/driver Valuer interface.
+func (d Date) Value() (driver.Value, error) {
+	return d.String(), nil
+}
+
+// Scan implements the database/sql Scanner interface.
+func (d *Date) Scan(v any) error {
+	switch vt := v.(type) {
+	case time.Time:
+		*d = DateOf(vt)
+	case *time.Time:
+		if vt != nil {
+			*d = DateOf(*vt)
+		}
+	case string:
+		var err error
+		*d, err = ParseDate(vt)
+		return err
+	case *string:
+		var err error
+		if vt != nil {
+			*d, err = ParseDate(*vt)
+		}
+		return err
+	case []byte:
+		var err error
+		*d, err = ParseDate(string(vt))
+		return err
+	case *[]byte:
+		var err error
+		if vt != nil {
+			*d, err = ParseDate(string(*vt))
+		}
+		return err
+	default:
+		return fmt.Errorf("unsupported scan type for Date: %T", v)
+	}
+	return nil
 }
 
 // A Time represents a time with nanosecond precision.
@@ -209,6 +278,17 @@ func (t Time) After(t2 Time) bool {
 	return t2.Before(t)
 }
 
+// Compare compares t and t2. If t is before t2, it returns -1;
+// if t is after t2, it returns +1; otherwise it returns 0.
+func (t Time) Compare(t2 Time) int {
+	if t.Before(t2) {
+		return -1
+	} else if t.After(t2) {
+		return +1
+	}
+	return 0
+}
+
 // MarshalText implements the encoding.TextMarshaler interface.
 // The output is the result of t.String().
 func (t Time) MarshalText() ([]byte, error) {
@@ -221,6 +301,46 @@ func (t *Time) UnmarshalText(data []byte) error {
 	var err error
 	*t, err = ParseTime(string(data))
 	return err
+}
+
+// Value implements the database/sql/driver Valuer interface.
+func (t Time) Value() (driver.Value, error) {
+	return t.String(), nil
+}
+
+// Scan implements the database/sql Scanner interface.
+func (t *Time) Scan(v any) error {
+	switch vt := v.(type) {
+	case time.Time:
+		*t = TimeOf(vt)
+	case *time.Time:
+		if vt != nil {
+			*t = TimeOf(*vt)
+		}
+	case string:
+		var err error
+		*t, err = ParseTime(vt)
+		return err
+	case *string:
+		var err error
+		if vt != nil {
+			*t, err = ParseTime(*vt)
+		}
+		return err
+	case []byte:
+		var err error
+		*t, err = ParseTime(string(vt))
+		return err
+	case *[]byte:
+		var err error
+		if vt != nil {
+			*t, err = ParseTime(string(*vt))
+		}
+		return err
+	default:
+		return fmt.Errorf("unsupported scan type for Time: %T", v)
+	}
+	return nil
 }
 
 // A DateTime represents a date and time.
@@ -302,6 +422,12 @@ func (dt DateTime) After(dt2 DateTime) bool {
 	return dt2.Before(dt)
 }
 
+// Compare compares dt and dt2. If dt is before dt2, it returns -1;
+// if dt is after dt2, it returns +1; otherwise it returns 0.
+func (dt DateTime) Compare(dt2 DateTime) int {
+	return dt.In(time.UTC).Compare(dt2.In(time.UTC))
+}
+
 // IsZero reports whether datetime fields are set to their default value.
 func (dt DateTime) IsZero() bool {
 	return dt.Date.IsZero() && dt.Time.IsZero()
@@ -319,4 +445,44 @@ func (dt *DateTime) UnmarshalText(data []byte) error {
 	var err error
 	*dt, err = ParseDateTime(string(data))
 	return err
+}
+
+// Value implements the database/sql/driver Valuer interface.
+func (dt DateTime) Value() (driver.Value, error) {
+	return dt.String(), nil
+}
+
+// Scan implements the database/sql Scanner interface.
+func (dt *DateTime) Scan(v any) error {
+	switch vt := v.(type) {
+	case time.Time:
+		*dt = DateTimeOf(vt)
+	case *time.Time:
+		if vt != nil {
+			*dt = DateTimeOf(*vt)
+		}
+	case string:
+		var err error
+		*dt, err = ParseDateTime(vt)
+		return err
+	case *string:
+		var err error
+		if vt != nil {
+			*dt, err = ParseDateTime(*vt)
+		}
+		return err
+	case []byte:
+		var err error
+		*dt, err = ParseDateTime(string(vt))
+		return err
+	case *[]byte:
+		var err error
+		if vt != nil {
+			*dt, err = ParseDateTime(string(*vt))
+		}
+		return err
+	default:
+		return fmt.Errorf("unsupported scan type for DateTime: %T", v)
+	}
+	return nil
 }

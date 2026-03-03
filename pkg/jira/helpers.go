@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	jiraBaseClient "github.com/andygrunwald/go-jira"
-	jiraClient "sigs.k8s.io/prow/prow/jira"
+	jiraClient "sigs.k8s.io/prow/pkg/jira"
 	"strings"
 )
 

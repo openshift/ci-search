@@ -151,6 +151,19 @@ type TableMetadata struct {
 	// TableConstraints contains table primary and foreign keys constraints.
 	// Present only if the table has primary or foreign keys.
 	TableConstraints *TableConstraints
+
+	// MaxStaleness staleness of data that could be
+	// returned when the table (or stale MV) is queried.
+	MaxStaleness *IntervalValue
+
+	// The tags associated with this table. Tag
+	// keys are globally unique. See additional information on tags
+	// (https://cloud.google.com/iam/docs/tags-access-control#definitions).
+	// An object containing a list of "key": value pairs. The key is the
+	// namespaced friendly name of the tag key, e.g. "12345/environment"
+	// where 12345 is parent id. The value is the friendly short name of the
+	// tag value, e.g. "production".
+	ResourceTags map[string]string
 }
 
 // TableConstraints defines the primary key and foreign key of a table.
@@ -317,19 +330,35 @@ type MaterializedViewDefinition struct {
 	// RefreshInterval defines the maximum frequency, in millisecond precision,
 	// at which this this materialized view will be refreshed.
 	RefreshInterval time.Duration
+
+	// AllowNonIncrementalDefinition for materialized view definition.
+	// The default value is false.
+	AllowNonIncrementalDefinition bool
+
+	// MaxStaleness of data that could be returned when materialized
+	// view is queried.
+	//
+	// Deprecated: use Table level MaxStaleness.
+	MaxStaleness *IntervalValue
 }
 
 func (mvd *MaterializedViewDefinition) toBQ() *bq.MaterializedViewDefinition {
 	if mvd == nil {
 		return nil
 	}
+	maxStaleness := ""
+	if mvd.MaxStaleness != nil {
+		maxStaleness = mvd.MaxStaleness.String()
+	}
 	return &bq.MaterializedViewDefinition{
-		EnableRefresh:     mvd.EnableRefresh,
-		Query:             mvd.Query,
-		LastRefreshTime:   mvd.LastRefreshTime.UnixNano() / 1e6,
-		RefreshIntervalMs: int64(mvd.RefreshInterval) / 1e6,
+		EnableRefresh:                 mvd.EnableRefresh,
+		Query:                         mvd.Query,
+		LastRefreshTime:               mvd.LastRefreshTime.UnixNano() / 1e6,
+		RefreshIntervalMs:             int64(mvd.RefreshInterval) / 1e6,
+		AllowNonIncrementalDefinition: mvd.AllowNonIncrementalDefinition,
+		MaxStaleness:                  maxStaleness,
 		// force sending the bool in all cases due to how Go handles false.
-		ForceSendFields: []string{"EnableRefresh"},
+		ForceSendFields: []string{"EnableRefresh", "AllowNonIncrementalDefinition"},
 	}
 }
 
@@ -337,11 +366,17 @@ func bqToMaterializedViewDefinition(q *bq.MaterializedViewDefinition) *Materiali
 	if q == nil {
 		return nil
 	}
+	var maxStaleness *IntervalValue
+	if q.MaxStaleness != "" {
+		maxStaleness, _ = ParseInterval(q.MaxStaleness)
+	}
 	return &MaterializedViewDefinition{
-		EnableRefresh:   q.EnableRefresh,
-		Query:           q.Query,
-		LastRefreshTime: unixMillisToTime(q.LastRefreshTime),
-		RefreshInterval: time.Duration(q.RefreshIntervalMs) * time.Millisecond,
+		EnableRefresh:                 q.EnableRefresh,
+		Query:                         q.Query,
+		LastRefreshTime:               unixMillisToTime(q.LastRefreshTime),
+		RefreshInterval:               time.Duration(q.RefreshIntervalMs) * time.Millisecond,
+		AllowNonIncrementalDefinition: q.AllowNonIncrementalDefinition,
+		MaxStaleness:                  maxStaleness,
 	}
 }
 
@@ -692,9 +727,9 @@ func (t *Table) Create(ctx context.Context, tm *TableMetadata) (err error) {
 	req := t.c.bqs.Tables.Insert(t.ProjectID, t.DatasetID, table).Context(ctx)
 	setClientHeader(req.Header())
 	return runWithRetry(ctx, func() (err error) {
-		ctx = trace.StartSpan(ctx, "bigquery.tables.insert")
+		sCtx := trace.StartSpan(ctx, "bigquery.tables.insert")
 		_, err = req.Do()
-		trace.EndSpan(ctx, err)
+		trace.EndSpan(sCtx, err)
 		return err
 	})
 }
@@ -786,6 +821,15 @@ func (tm *TableMetadata) toBQ() (*bq.Table, error) {
 			for i, fk := range tm.TableConstraints.ForeignKeys {
 				t.TableConstraints.ForeignKeys[i] = fk.toBQ()
 			}
+		}
+	}
+	if tm.MaxStaleness != nil {
+		t.MaxStaleness = tm.MaxStaleness.String()
+	}
+	if tm.ResourceTags != nil {
+		t.ResourceTags = make(map[string]string)
+		for k, v := range tm.ResourceTags {
+			t.ResourceTags[k] = v
 		}
 	}
 	return t, nil
@@ -907,6 +951,15 @@ func bqToTableMetadata(t *bq.Table, c *Client) (*TableMetadata, error) {
 			ForeignKeys: bqToForeignKeys(t.TableConstraints, c),
 		}
 	}
+	if t.MaxStaleness != "" {
+		md.MaxStaleness, _ = ParseInterval(t.MaxStaleness)
+	}
+	if t.ResourceTags != nil {
+		md.ResourceTags = make(map[string]string)
+		for k, v := range t.ResourceTags {
+			md.ResourceTags[k] = v
+		}
+	}
 	return md, nil
 }
 
@@ -919,9 +972,9 @@ func (t *Table) Delete(ctx context.Context) (err error) {
 	setClientHeader(call.Header())
 
 	return runWithRetry(ctx, func() (err error) {
-		ctx = trace.StartSpan(ctx, "bigquery.tables.delete")
+		sCtx := trace.StartSpan(ctx, "bigquery.tables.delete")
 		err = call.Do()
-		trace.EndSpan(ctx, err)
+		trace.EndSpan(sCtx, err)
 		return err
 	})
 }
@@ -933,7 +986,7 @@ func (t *Table) Read(ctx context.Context) *RowIterator {
 
 func (t *Table) read(ctx context.Context, pf pageFetcher) *RowIterator {
 	if t.c.isStorageReadAvailable() {
-		it, err := newStorageRowIteratorFromTable(ctx, t, false)
+		it, err := newStorageRowIteratorFromTable(ctx, t, t.c.projectID, false)
 		if err == nil {
 			return it
 		}
@@ -985,9 +1038,9 @@ func (t *Table) Update(ctx context.Context, tm TableMetadataToUpdate, etag strin
 	}
 	var res *bq.Table
 	if err := runWithRetry(ctx, func() (err error) {
-		ctx = trace.StartSpan(ctx, "bigquery.tables.patch")
+		sCtx := trace.StartSpan(ctx, "bigquery.tables.patch")
 		res, err = tpc.call.Do()
-		trace.EndSpan(ctx, err)
+		trace.EndSpan(sCtx, err)
 		return err
 	}); err != nil {
 		return nil, err
@@ -1081,6 +1134,17 @@ func (tm *TableMetadataToUpdate) toBQ() (*bq.Table, error) {
 			t.TableConstraints.ForceSendFields = append(t.TableConstraints.ForceSendFields, "ForeignKeys")
 		}
 	}
+	if tm.MaxStaleness != nil {
+		t.MaxStaleness = tm.MaxStaleness.String()
+		forceSend("MaxStaleness")
+	}
+	if tm.ResourceTags != nil {
+		t.ResourceTags = make(map[string]string)
+		for k, v := range tm.ResourceTags {
+			t.ResourceTags[k] = v
+		}
+		forceSend("ResourceTags")
+	}
 	labels, forces, nulls := tm.update()
 	t.Labels = labels
 	t.ForceSendFields = append(t.ForceSendFields, forces...)
@@ -1161,6 +1225,19 @@ type TableMetadataToUpdate struct {
 	// TableConstraints allows modification of table constraints
 	// such as primary and foreign keys.
 	TableConstraints *TableConstraints
+
+	// MaxStaleness staleness of data that could be
+	// returned when the table (or stale MV) is queried.
+	MaxStaleness *IntervalValue
+
+	// The tags associated with this table. Tag
+	// keys are globally unique. See additional information on tags
+	// (https://cloud.google.com/iam/docs/tags-access-control#definitions).
+	// An object containing a list of "key": value pairs. The key is the
+	// namespaced friendly name of the tag key, e.g. "12345/environment"
+	// where 12345 is parent id. The value is the friendly short name of the
+	// tag value, e.g. "production".
+	ResourceTags map[string]string
 
 	labelUpdater
 }
