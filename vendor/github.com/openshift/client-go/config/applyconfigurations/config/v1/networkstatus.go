@@ -3,21 +3,31 @@
 package v1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// NetworkStatusApplyConfiguration represents an declarative configuration of the NetworkStatus type for use
+// NetworkStatusApplyConfiguration represents a declarative configuration of the NetworkStatus type for use
 // with apply.
+//
+// NetworkStatus is the current network configuration.
 type NetworkStatusApplyConfiguration struct {
-	ClusterNetwork    []ClusterNetworkEntryApplyConfiguration `json:"clusterNetwork,omitempty"`
-	ServiceNetwork    []string                                `json:"serviceNetwork,omitempty"`
-	NetworkType       *string                                 `json:"networkType,omitempty"`
-	ClusterNetworkMTU *int                                    `json:"clusterNetworkMTU,omitempty"`
-	Migration         *NetworkMigrationApplyConfiguration     `json:"migration,omitempty"`
-	Conditions        []metav1.Condition                      `json:"conditions,omitempty"`
+	// IP address pool to use for pod IPs.
+	ClusterNetwork []ClusterNetworkEntryApplyConfiguration `json:"clusterNetwork,omitempty"`
+	// IP address pool for services.
+	// Currently, we only support a single entry here.
+	ServiceNetwork []string `json:"serviceNetwork,omitempty"`
+	// networkType is the plugin that is deployed (e.g. OVNKubernetes).
+	NetworkType *string `json:"networkType,omitempty"`
+	// clusterNetworkMTU is the MTU for inter-pod networking.
+	ClusterNetworkMTU *int `json:"clusterNetworkMTU,omitempty"`
+	// migration contains the cluster network migration configuration.
+	Migration *NetworkMigrationApplyConfiguration `json:"migration,omitempty"`
+	// conditions represents the observations of a network.config current state.
+	// Known .status.conditions.type are: "NetworkDiagnosticsAvailable"
+	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
-// NetworkStatusApplyConfiguration constructs an declarative configuration of the NetworkStatus type for use with
+// NetworkStatusApplyConfiguration constructs a declarative configuration of the NetworkStatus type for use with
 // apply.
 func NetworkStatus() *NetworkStatusApplyConfiguration {
 	return &NetworkStatusApplyConfiguration{}
@@ -73,9 +83,12 @@ func (b *NetworkStatusApplyConfiguration) WithMigration(value *NetworkMigrationA
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *NetworkStatusApplyConfiguration) WithConditions(values ...metav1.Condition) *NetworkStatusApplyConfiguration {
+func (b *NetworkStatusApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *NetworkStatusApplyConfiguration {
 	for i := range values {
-		b.Conditions = append(b.Conditions, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithConditions")
+		}
+		b.Conditions = append(b.Conditions, *values[i])
 	}
 	return b
 }

@@ -40,7 +40,7 @@ func TestListWatcher(t *testing.T) {
 			}
 		},
 	}
-	obj, err := lw.List(metav1.ListOptions{})
+	obj, err := lw.List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestListWatcher(t *testing.T) {
 	}
 	t.Logf("%#v", list.Items)
 
-	w, err := lw.Watch(metav1.ListOptions{ResourceVersion: list.ResourceVersion})
+	w, err := lw.Watch(context.Background(), metav1.ListOptions{ResourceVersion: list.ResourceVersion})
 	if err != nil {
 		t.Fatal(err)
 	}

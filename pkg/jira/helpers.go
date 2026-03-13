@@ -3,13 +3,14 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	jiraClient "sigs.k8s.io/prow/pkg/jira"
-	"strings"
 )
 
 const (
-	ReleaseBlockerField = "customfield_12319743"
+	ReleaseBlockerField = "customfield_10847"
 )
 
 func FilterIssueComments(issueComments *[]jiraBaseClient.Issue) {
