@@ -543,7 +543,7 @@ func (o *options) Run() error {
 	}
 	jobURIPrefix, err := url.Parse(o.JobURIPrefix)
 	if err != nil {
-		klog.Exitf("Unable to parse --job-uri-prefix: %v", err)
+		return fmt.Errorf("unable to parse --job-uri-prefix: %v", err)
 	}
 	o.jobURIPrefix = jobURIPrefix
 	o.jobsPath = filepath.Join(o.Path, "jobs")
@@ -771,50 +771,48 @@ func (o *options) configureJira() (cache.SharedIndexInformer, error) {
 	if len(o.JiraSearch) == 0 {
 		return nil, fmt.Errorf("--jira-search is required")
 	}
-	if jc, err := o.jira.Client(); err == nil {
-		jiraURL, err := url.Parse(jc.JiraURL())
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse --jira-endpoint: %v", err)
-		}
-
-		u := *jiraURL
-		u.Path = "issues/"
-		o.issueURIPrefix = &u
-
-		c := &jira.Client{
-			Client: jc,
-		}
-		jiraInformer := jira.NewInformer(
-			c,
-			10*time.Minute,
-			8*time.Hour,
-			30*time.Minute,
-			func(metav1.ListOptions) jira.SearchIssuesArgs {
-				return jira.SearchIssuesArgs{
-					Jql: o.JiraSearch,
-				}
-			},
-			jira.FilterPrivateIssues,
-		)
-		jiraLister := jira.NewIssueLister(jiraInformer.GetIndexer())
-		if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
-			return nil, fmt.Errorf("unable to create directory for artifact: %w", err)
-		}
-
-		jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
-		jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
-
-		o.issues = jiraStore
-
-		ctx := context.Background()
-		go jiraInformer.Run(ctx.Done())
-		go jiraStore.Run(ctx, jiraInformer)
-		go jiraDiskStore.Run(ctx, jiraLister, jiraStore, o.NoIndex)
-		klog.Infof("Started indexing jira %s with query %q", jiraURL, o.JiraSearch)
-		return jiraInformer, nil
+	jc, err := o.jira.Client()
+	if err != nil {
+		return nil, fmt.Errorf("unable to configure jira: %v", err)
+	}
+	jiraURL, err := url.Parse(jc.JiraURL())
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse --jira-endpoint: %v", err)
 	}
 
-	o.issues = jira.NewCommentStore(nil, 0, nil)
+	u := *jiraURL
+	u.Path = "issues/"
+	o.issueURIPrefix = &u
 
-	return nil, nil
+	c := &jira.Client{
+		Client: jc,
+	}
+	jiraInformer := jira.NewInformer(
+		c,
+		10*time.Minute,
+		8*time.Hour,
+		30*time.Minute,
+		func(metav1.ListOptions) jira.SearchIssuesArgs {
+			return jira.SearchIssuesArgs{
+				Jql: o.JiraSearch,
+			}
+		},
+		jira.FilterPrivateIssues,
+	)
+	jiraLister := jira.NewIssueLister(jiraInformer.GetIndexer())
+	if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
+		return nil, fmt.Errorf("unable to create directory for artifact: %w", err)
+	}
+
+	jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
+	jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
+
+	o.issues = jiraStore
+
+	ctx := context.Background()
+	go jiraInformer.Run(ctx.Done())
+	go jiraStore.Run(ctx, jiraInformer)
+	go jiraDiskStore.Run(ctx, jiraLister, jiraStore, o.NoIndex)
+	klog.Infof("Started indexing jira %s with query %q", jiraURL, o.JiraSearch)
+	return jiraInformer, nil
 }
