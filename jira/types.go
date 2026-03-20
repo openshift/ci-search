@@ -3,9 +3,10 @@ package jira
 import (
 	"bytes"
 	"encoding/json"
-	"k8s.io/klog/v2"
 	"strconv"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,7 +72,7 @@ type CommentVisibility struct {
 	Value string `json:"value,omitempty" structs:"value,omitempty"`
 }
 
-// TODO-check what filed is of interest, the rest can be removed
+// TODO-check what field is of interest, the rest can be removed
 var issueInfoFields = []string{"created", "priority", "labels", "versions", "assignee", "updated", "status", "components", "summary", "creator", "subtasks", "reporter", "progress", "resolution", "fixVersions", IssueTargetVersionField}
 
 type SearchIssuesArgs struct {
@@ -79,7 +80,7 @@ type SearchIssuesArgs struct {
 	Jql            string
 	IncludeFields  []string
 	MaxResults     int
-	StartAt        int
+	NextPageToken  string
 }
 
 func NewIssueComments(id string, info *jiraBaseClient.Comments) *IssueComments {

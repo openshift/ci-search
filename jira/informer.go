@@ -57,7 +57,7 @@ func NewInformer(client *Client, interval, maxInterval, resyncInterval time.Dura
 		interval:    interval,
 		maxInterval: maxInterval,
 	}
-	lwPager := &cache.ListWatch{ListFunc: lw.List, WatchFunc: lw.Watch}
+	lwPager := &cache.ListWatch{ListWithContextFunc: lw.List, WatchFuncWithContext: lw.Watch}
 	return cache.NewSharedIndexInformer(lwPager, &Issue{}, resyncInterval, nil)
 }
 
@@ -67,40 +67,32 @@ type ListWatcher struct {
 	includeFn   func(issue *jiraClient.Issue) bool
 	interval    time.Duration
 	maxInterval time.Duration
+	total       int
 }
 
-func (lw *ListWatcher) List(options metav1.ListOptions) (runtime.Object, error) {
+func (lw *ListWatcher) List(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 	args := lw.argsFn(options)
 	if options.Limit > 0 {
-		args.MaxResults = int(options.Limit) + 1
+		args.MaxResults = int(options.Limit)
 	}
-	if len(options.Continue) > 0 {
-		if offset, err := strconv.Atoi(options.Continue); err == nil && offset > 0 {
-			args.StartAt = offset
-		}
+	var searchOptions jiraClient.SearchOptionsV2
+	if args.MaxResults == 0 {
+		searchOptions.MaxResults = 500
+	} else {
+		searchOptions.MaxResults = args.MaxResults
 	}
-	issues, err := lw.client.SearchIssues(context.Background(), args)
+	args.IncludeFields = []string{"security"}
+	searchOptions.Fields = append(issueInfoFields, args.IncludeFields...)
+	issues, err := lw.client.SearchIssuesWithPagination(ctx, args.Jql, &searchOptions)
 	if err != nil {
 		return nil, err
 	}
 	list := NewIssueList(issues, lw.includeFn)
-	if options.Limit > 0 {
-		returned := len(issues)
-		hasMore := returned > int(options.Limit)
-		if hasMore {
-			if int(options.Limit) > len(list.Items) {
-				list.Items = list.Items[:int(options.Limit)]
-			}
-			list.Continue = strconv.Itoa(args.StartAt + int(options.Limit))
-		}
-		klog.V(6).Infof("Listed issues offset=%d limit=%d total=%d items=%d hasMore=%t nextOffset=%s", args.StartAt, options.Limit, returned, len(list.Items), hasMore, list.Continue)
-	} else {
-		klog.V(6).Infof("Listed issues offset=%d limit=%d total=%d items=%d", args.StartAt, options.Limit, len(issues), len(list.Items))
-	}
+	klog.V(6).Infof("ListWatcher retrieved %d issues", len(list.Items))
 	return list, nil
 }
 
-func (lw *ListWatcher) Watch(options metav1.ListOptions) (watch.Interface, error) {
+func (lw *ListWatcher) Watch(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 	var rv metav1.Time
 	if err := rv.UnmarshalQueryParameter(options.ResourceVersion); err != nil {
 		return nil, err
@@ -183,15 +175,24 @@ func (w *periodicWatcher) run() {
 	wait.Until(func() {
 		args := w.args
 		args.LastChangeTime = rv.Time.In(location)
-		issues, err := w.lw.client.SearchIssues(context.Background(), args)
+
+		var searchOptions jiraClient.SearchOptionsV2
+		if args.MaxResults == 0 {
+			searchOptions.MaxResults = 500
+		} else {
+			searchOptions.MaxResults = args.MaxResults
+		}
+		args.IncludeFields = []string{"security"}
+		searchOptions.Fields = append(issueInfoFields, args.IncludeFields...)
+		issues, err := w.lw.client.SearchIssuesWithPagination(context.Background(), addTimeToJQL(args.LastChangeTime, args.Jql), &searchOptions)
 		if err != nil {
-			klog.Errorf("Watcher search issues error: %v", err)
+			klog.Errorf("periodicWatcher search issues error: %v", err)
 			w.ch <- watch.Event{Type: watch.Error, Object: &errors.NewInternalError(err).ErrStatus}
 			w.stop()
 			return
 		}
 		if len(issues) == 0 {
-			klog.V(5).Infof("Watch observered no changes")
+			klog.V(5).Infof("periodicWatcher observered no changes")
 			return
 		}
 
@@ -206,7 +207,7 @@ func (w *periodicWatcher) run() {
 			return
 		}
 
-		klog.V(5).Infof("Watch observed %d issues with a change time since %s", len(list.Items), timeToRV(rv))
+		klog.V(5).Infof("periodicWatcher observed %d issues with a change time since %s", len(list.Items), timeToRV(rv))
 
 		// sort the list from the oldest change to the newest change
 		sort.Slice(list.Items, func(i, j int) bool {

@@ -3,6 +3,9 @@ package jira_watcher_controller
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
+
 	"github.com/openshift/ci-search/jira"
 	"github.com/openshift/ci-search/pkg/bigquery"
 	helpers "github.com/openshift/ci-search/pkg/jira"
@@ -12,8 +15,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-	"strconv"
-	"time"
 )
 
 type JiraWatcherController struct {
@@ -28,7 +29,7 @@ type JiraWatcherController struct {
 	maxBatch     int
 	rateLimit    *rate.Limiter
 	cachesToSync []cache.InformerSynced
-	queue        workqueue.RateLimitingInterface
+	queue        workqueue.TypedRateLimitingInterface[string]
 }
 
 func NewJiraWatcherController(jiraClient *jira.Client, jiraInformer cache.SharedIndexInformer, jiraLister *jira.IssueLister, showPrivateMessages bool, bigQueryClient *bigquery.Client, dryRun bool) (*JiraWatcherController, error) {
@@ -43,7 +44,7 @@ func NewJiraWatcherController(jiraClient *jira.Client, jiraInformer cache.Shared
 		rateLimit:           rate.NewLimiter(rate.Every(15*time.Second), 3),
 	}
 
-	c.queue = workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(), workqueue.RateLimitingQueueConfig{Name: "JiraWatcherController"})
+	c.queue = workqueue.NewTypedRateLimitingQueueWithConfig(workqueue.DefaultTypedControllerRateLimiter[string](), workqueue.TypedRateLimitingQueueConfig[string]{Name: "JiraWatcherController"})
 	c.cachesToSync = append(c.cachesToSync, jiraInformer.HasSynced)
 
 	_, err := jiraInformer.AddEventHandler(&cache.ResourceEventHandlerFuncs{
@@ -135,9 +136,9 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 		if quit {
 			return false
 		}
-		id, err := strconv.Atoi(k.(string))
+		id, err := strconv.Atoi(k)
 		if err != nil {
-			klog.Warningf("comment id %q was not parsable to int: %v", k.(string), err)
+			klog.Warningf("comment id %q was not parsable to int: %v", k, err)
 			c.queue.Forget(k)
 			c.queue.Done(k)
 			continue
@@ -153,8 +154,8 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 		klog.V(5).Infof("Successfully synced %d issues with bigquery", len(issueIDs))
 		// Cleanup all the keys that we just processed...
 		for _, k := range keys {
-			c.queue.Forget(k)
-			c.queue.Done(k)
+			c.queue.Forget(k.(string))
+			c.queue.Done(k.(string))
 		}
 		return true
 	}
@@ -162,8 +163,8 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 	utilruntime.HandleError(fmt.Errorf("unable to sync issues with bigquery: %w", err))
 	// Ensure that all the keys that we just processed are re-queued...
 	for _, k := range keys {
-		c.queue.AddRateLimited(k)
-		c.queue.Done(k)
+		c.queue.AddRateLimited(k.(string))
+		c.queue.Done(k.(string))
 	}
 
 	return true
@@ -172,7 +173,7 @@ func (c *JiraWatcherController) processQueue(ctx context.Context) bool {
 func (c *JiraWatcherController) sync(ctx context.Context, issueIDs []int, timestamp time.Time) error {
 	var tickets []*Ticket
 
-	klog.V(5).Infof("Fetching %d comments from Jira", len(issueIDs))
+	klog.V(5).Infof("Fetching comments, for %d issues, from Jira", len(issueIDs))
 	issueComments, err := c.jiraClient.IssueCommentsByID(ctx, issueIDs...)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve comments from Jira: %v", err)

@@ -17,6 +17,13 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/gorilla/mux"
+	"github.com/openshift/ci-search/bugzilla"
+	"github.com/openshift/ci-search/jira"
+	"github.com/openshift/ci-search/metricdb"
+	"github.com/openshift/ci-search/metricdb/httpgraph"
+	"github.com/openshift/ci-search/pkg/proc"
+	"github.com/openshift/ci-search/prow"
+	"github.com/openshift/ci-search/static"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
@@ -28,15 +35,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	jiraClient "sigs.k8s.io/prow/pkg/jira"
-
-	"github.com/openshift/ci-search/bugzilla"
-	"github.com/openshift/ci-search/jira"
-	"github.com/openshift/ci-search/metricdb"
-	"github.com/openshift/ci-search/metricdb/httpgraph"
-	"github.com/openshift/ci-search/pkg/proc"
-	"github.com/openshift/ci-search/prow"
-	"github.com/openshift/ci-search/static"
+	"sigs.k8s.io/prow/pkg/flagutil"
 )
 
 func main() {
@@ -62,34 +61,36 @@ func main() {
 			}
 		},
 	}
-	flag := cmd.Flags()
+	flags := cmd.Flags()
 
-	flag.StringVar(&opt.Path, "path", opt.Path, "The directory to save index results to.")
-	flag.StringVar(&opt.ListenAddr, "listen", opt.ListenAddr, "The address to serve search results on")
-	flag.StringVar(&opt.DebugAddr, "debug-listen", opt.DebugAddr, "The address to serve debug handlers on")
-	flag.AddGoFlag(original.Lookup("v"))
+	flags.StringVar(&opt.Path, "path", opt.Path, "The directory to save index results to.")
+	flags.StringVar(&opt.ListenAddr, "listen", opt.ListenAddr, "The address to serve search results on")
+	flags.StringVar(&opt.DebugAddr, "debug-listen", opt.DebugAddr, "The address to serve debug handlers on")
+	flags.AddGoFlag(original.Lookup("v"))
 
-	flag.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
-	flag.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
-	flag.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
-	flag.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
-	flag.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
-	flag.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
-	flag.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
-	flag.StringVar(&opt.IndexBucket, "index-bucket", opt.IndexBucket, "A GCS bucket to look for job indices in.")
-	flag.StringVar(&opt.MetricDBPath, "metric-db", opt.MetricDBPath, "Path where metrics should be recorded as a SQLite database. If empty, no metrics will be stored.")
-	flag.DurationVar(&opt.MetricMaxAge, "metric-max-age", opt.MetricMaxAge, "The maximum age to retain metrics. If negative, metrics are retained forever. If zero, no metrics are gathered.")
+	flags.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
+	flags.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
+	flags.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
+	flags.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
+	flags.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
+	flags.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
+	flags.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
+	flags.StringVar(&opt.IndexBucket, "index-bucket", opt.IndexBucket, "A GCS bucket to look for job indices in.")
+	flags.StringVar(&opt.MetricDBPath, "metric-db", opt.MetricDBPath, "Path where metrics should be recorded as a SQLite database. If empty, no metrics will be stored.")
+	flags.DurationVar(&opt.MetricMaxAge, "metric-max-age", opt.MetricMaxAge, "The maximum age to retain metrics. If negative, metrics are retained forever. If zero, no metrics are gathered.")
 
-	flag.StringVar(&opt.BugzillaURL, "bugzilla-url", opt.BugzillaURL, "The URL of a bugzilla server to index bugs from.")
-	flag.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
-	flag.StringVar(&opt.BugzillaSearch, "bugzilla-search", opt.BugzillaSearch, "A quicksearch query to search for bugs to index.")
+	flags.StringVar(&opt.BugzillaURL, "bugzilla-url", opt.BugzillaURL, "The URL of a bugzilla server to index bugs from.")
+	flags.StringVar(&opt.BugzillaTokenPath, "bugzilla-token-file", opt.BugzillaTokenPath, "A file to read a bugzilla token from.")
+	flags.StringVar(&opt.BugzillaSearch, "bugzilla-search", opt.BugzillaSearch, "A quicksearch query to search for bugs to index.")
 
 	// jira
-	flag.StringVar(&opt.JiraURL, "jira-url", opt.JiraURL, "The URL of a Jira server to index issues from.")
-	flag.StringVar(&opt.JiraTokenPath, "jira-token-file", opt.JiraTokenPath, "A file to read a Jira token from.")
-	flag.StringVar(&opt.JiraSearch, "jira-search", opt.JiraSearch, "A JQL query to search for issues to index.")
+	flags.StringVar(&opt.JiraSearch, "jira-search", opt.JiraSearch, "A JQL query to search for issues to index.")
 
-	flag.BoolVar(&opt.NoIndex, "disable-indexing", opt.NoIndex, "Disable all indexing to disk.")
+	flags.BoolVar(&opt.NoIndex, "disable-indexing", opt.NoIndex, "Disable all indexing to disk.")
+
+	goFlagSet := flag.NewFlagSet("prowflags", flag.ContinueOnError)
+	opt.jira.AddFlags(goFlagSet)
+	flags.AddGoFlagSet(goFlagSet)
 
 	if err := cmd.Execute(); err != nil {
 		klog.Exitf("error: %v", err)
@@ -119,9 +120,9 @@ type options struct {
 	BugzillaTokenPath string
 
 	// jira
-	JiraURL        string
-	JiraSearch     string
-	JiraTokenPath  string
+	jira       flagutil.JiraOptions
+	JiraSearch string
+
 	issuesPath     string
 	issues         *jira.CommentStore
 	issueURIPrefix *url.URL
@@ -161,6 +162,14 @@ type JobCountBucket struct {
 	T          int64
 	Jobs       int
 	FailedJobs int
+}
+
+// validate commandline option validation
+func (o *options) validate() error {
+	if err := o.jira.Validate(false); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Stats returns aggregate statistics for the indexed paths.
@@ -529,9 +538,12 @@ func (h *Health) ServeReady(readynessChecks ...ReadinessCheck) {
 }
 
 func (o *options) Run() error {
+	if err := o.validate(); err != nil {
+		klog.Exitf("Invalid options: %v", err)
+	}
 	jobURIPrefix, err := url.Parse(o.JobURIPrefix)
 	if err != nil {
-		klog.Exitf("Unable to parse --job-uri-prefix: %v", err)
+		return fmt.Errorf("unable to parse --job-uri-prefix: %v", err)
 	}
 	o.jobURIPrefix = jobURIPrefix
 	o.jobsPath = filepath.Join(o.Path, "jobs")
@@ -606,62 +618,11 @@ func (o *options) Run() error {
 	}
 
 	// jira
-	var jiraInformer cache.SharedIndexInformer
-	if len(o.JiraURL) > 0 {
-		jiraURL, err := url.Parse(o.JiraURL)
-		if err != nil {
-			klog.Exitf("Unable to parse --jira-url: %v", err)
-		}
-		u := *jiraURL
-		u.Path = "issues/"
-		o.issueURIPrefix = &u
-
-		if len(o.JiraSearch) == 0 {
-			klog.Exitf("--jira-search is required")
-		}
-		tokenData, err := os.ReadFile(o.JiraTokenPath)
-		if err != nil {
-			klog.Exitf("Failed to load --jira-token-file: %v", err)
-		}
-		options := func(options *jiraClient.Options) {
-			options.BearerAuth = func() (token string) {
-				return string(bytes.TrimSpace(tokenData))
-			}
-		}
-		jc, _ := jiraClient.NewClient(o.JiraURL, options)
-		c := &jira.Client{
-			Client: jc,
-		}
-		jiraInformer = jira.NewInformer(
-			c,
-			10*time.Minute,
-			8*time.Hour,
-			30*time.Minute,
-			func(metav1.ListOptions) jira.SearchIssuesArgs {
-				return jira.SearchIssuesArgs{
-					Jql: o.JiraSearch,
-				}
-			},
-			jira.FilterPrivateIssues,
-		)
-		jiraLister := jira.NewIssueLister(jiraInformer.GetIndexer())
-		if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
-			return fmt.Errorf("unable to create directory for artifact: %w", err)
-		}
-
-		jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
-		jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
-
-		o.issues = jiraStore
-
-		ctx := context.Background()
-		go jiraInformer.Run(ctx.Done())
-		go jiraStore.Run(ctx, jiraInformer)
-		go jiraDiskStore.Run(ctx, jiraLister, jiraStore, o.NoIndex)
-		klog.Infof("Started indexing jira %s with query %q", o.JiraURL, o.JiraSearch)
-	} else {
-		o.issues = jira.NewCommentStore(nil, 0, nil)
+	jiraInformer, err := o.configureJira()
+	if err != nil {
+		klog.Exitf("Unable to configure jira: %v", err)
 	}
+
 	var store *prow.DiskStore
 	var informer cache.SharedIndexInformer
 	if len(o.DeckURI) > 0 {
@@ -804,4 +765,54 @@ func contains(arr []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func (o *options) configureJira() (cache.SharedIndexInformer, error) {
+	if len(o.JiraSearch) == 0 {
+		return nil, fmt.Errorf("--jira-search is required")
+	}
+	jc, err := o.jira.Client()
+	if err != nil {
+		return nil, fmt.Errorf("unable to configure jira: %v", err)
+	}
+	jiraURL, err := url.Parse(jc.JiraURL())
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse --jira-endpoint: %v", err)
+	}
+
+	u := *jiraURL
+	u.Path = "issues/"
+	o.issueURIPrefix = &u
+
+	c := &jira.Client{
+		Client: jc,
+	}
+	jiraInformer := jira.NewInformer(
+		c,
+		10*time.Minute,
+		8*time.Hour,
+		30*time.Minute,
+		func(metav1.ListOptions) jira.SearchIssuesArgs {
+			return jira.SearchIssuesArgs{
+				Jql: o.JiraSearch,
+			}
+		},
+		jira.FilterPrivateIssues,
+	)
+	jiraLister := jira.NewIssueLister(jiraInformer.GetIndexer())
+	if err := os.MkdirAll(o.issuesPath, 0777); err != nil {
+		return nil, fmt.Errorf("unable to create directory for artifact: %w", err)
+	}
+
+	jiraDiskStore := jira.NewCommentDiskStore(o.issuesPath, o.MaxAge)
+	jiraStore := jira.NewCommentStore(c, 2*time.Minute, jiraDiskStore)
+
+	o.issues = jiraStore
+
+	ctx := context.Background()
+	go jiraInformer.Run(ctx.Done())
+	go jiraStore.Run(ctx, jiraInformer)
+	go jiraDiskStore.Run(ctx, jiraLister, jiraStore, o.NoIndex)
+	klog.Infof("Started indexing jira %s with query %q", jiraURL, o.JiraSearch)
+	return jiraInformer, nil
 }
