@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	IssueQaContactField     = "customfield_10470"
-	IssueTargetVersionField = "customfield_10855"
+	IssueQaContactField      = "customfield_10470"
+	IssueTargetVersionField  = "customfield_10855"
+	IssueReleaseBlockerField = "customfield_10847"
 )
 
 // GetUnknownField will attempt to get the specified field from the Unknowns struct and unmarshal
@@ -101,6 +102,25 @@ func IssueTargetVersionIDs(s jiraBaseClient.Issue) []string {
 		listOfTargetVersions = append(listOfTargetVersions, element.ID)
 	}
 	return listOfTargetVersions
+}
+
+type CustomField struct {
+	Self     string `json:"self"`
+	ID       string `json:"id"`
+	Value    string `json:"value"`
+	Disabled bool   `json:"disabled"`
+}
+
+func GetReleaseBlocker(issue *jiraBaseClient.Issue) (*CustomField, error) {
+	var obj *CustomField
+	isSet, err := GetUnknownField(IssueReleaseBlockerField, issue, func() any {
+		obj = &CustomField{}
+		return obj
+	})
+	if !isSet {
+		return nil, err
+	}
+	return obj, err
 }
 
 func FilterPrivateIssues(issue *jiraBaseClient.Issue) bool {

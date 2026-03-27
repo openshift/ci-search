@@ -1,17 +1,18 @@
 package jira_watcher_controller
 
 import (
-	"cloud.google.com/go/bigquery"
 	"encoding/json"
 	"fmt"
-	jiraBaseClient "github.com/andygrunwald/go-jira"
-	"github.com/openshift/ci-search/jira"
-	helpers "github.com/openshift/ci-search/pkg/jira"
-	"k8s.io/klog/v2"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	"cloud.google.com/go/bigquery"
+	jiraBaseClient "github.com/andygrunwald/go-jira"
+	"github.com/openshift/ci-search/jira"
+	helpers "github.com/openshift/ci-search/pkg/jira"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -352,8 +353,12 @@ func generateBigQueryJson(src interface{}) string {
 }
 
 func getReleaseBlocker(i jiraBaseClient.Issue) ReleaseBlocker {
-	rb, err := helpers.GetReleaseBlocker(&i)
-	if err != nil || rb == nil {
+	rb, err := jira.GetReleaseBlocker(&i)
+	if err != nil {
+		klog.Errorf("failed to parse release blocker for issue %s: %v", i.ID, err)
+		return ReleaseBlocker{}
+	}
+	if rb == nil {
 		return ReleaseBlocker{}
 	}
 	return ReleaseBlocker{
