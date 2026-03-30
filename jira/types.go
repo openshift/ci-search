@@ -73,7 +73,11 @@ type CommentVisibility struct {
 }
 
 // TODO-check what field is of interest, the rest can be removed
-var issueInfoFields = []string{"created", "priority", "labels", "versions", "assignee", "updated", "status", "components", "summary", "creator", "subtasks", "reporter", "progress", "resolution", "fixVersions", IssueTargetVersionField}
+var issueInfoFields = []string{
+	"created", "priority", "labels", "versions", "assignee", "updated", "status", "components",
+	"summary", "creator", "subtasks", "reporter", "progress", "resolution", "fixVersions",
+	IssueQaContactField, IssueTargetVersionField, IssueReleaseBlockerField,
+}
 
 type SearchIssuesArgs struct {
 	LastChangeTime time.Time

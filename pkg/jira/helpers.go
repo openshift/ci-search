@@ -1,16 +1,10 @@
 package jira
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	jiraBaseClient "github.com/andygrunwald/go-jira"
 	jiraClient "sigs.k8s.io/prow/pkg/jira"
-)
-
-const (
-	ReleaseBlockerField = "customfield_10847"
 )
 
 func FilterIssueComments(issueComments *[]jiraBaseClient.Issue) {
@@ -93,45 +87,4 @@ func CommentAuthor(authorDisplayName string) string {
 
 func IssueTargetVersions(s jiraBaseClient.Issue) (*[]*jiraBaseClient.Version, error) {
 	return jiraClient.GetIssueTargetVersion(&s)
-}
-
-type CustomField struct {
-	Self     string `json:"self"`
-	ID       string `json:"id"`
-	Value    string `json:"value"`
-	Disabled bool   `json:"disabled"`
-}
-
-// GetUnknownField will attempt to get the specified field from the Unknowns struct and unmarshal
-// the value into the provided function. If the field is not set, the first return value of this
-// function will return false.
-func getUnknownField(field string, issue *jiraBaseClient.Issue, fn func() any) (bool, error) {
-	obj := fn()
-	if issue.Fields == nil || issue.Fields.Unknowns == nil {
-		return false, nil
-	}
-	unknownField, ok := issue.Fields.Unknowns[field]
-	if !ok {
-		return false, nil
-	}
-	bytes, err := json.Marshal(unknownField)
-	if err != nil {
-		return true, fmt.Errorf("failed to process the custom field %s. Error : %v", field, err)
-	}
-	if err := json.Unmarshal(bytes, obj); err != nil {
-		return true, fmt.Errorf("failed to unmarshal the json to struct for %s. Error: %v", field, err)
-	}
-	return true, nil
-}
-
-func GetReleaseBlocker(issue *jiraBaseClient.Issue) (*CustomField, error) {
-	var obj *CustomField
-	isSet, err := getUnknownField(ReleaseBlockerField, issue, func() any {
-		obj = &CustomField{}
-		return obj
-	})
-	if !isSet {
-		return nil, err
-	}
-	return obj, err
 }

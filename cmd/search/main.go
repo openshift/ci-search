@@ -55,7 +55,9 @@ func main() {
 		IndexBucket:       "test-platform-results",
 		// JiraSearch: "filter=105522", // CI Search - 30 Days
 		// JiraSearch: "filter=105121", // CI Search - 60 Days
-		JiraSearch: "filter=105523", // CI Search - 90 Days
+		// JiraSearch: "filter=105523", // CI Search - 90 Days
+		// TODO: 3/30/2026 - Remove in roughly 90 days (approx 7/1/2026)
+		JiraSearch: "filter=106793", // CI Search - 5 Days
 	}
 	cmd := &cobra.Command{
 		Run: func(cmd *cobra.Command, arguments []string) {
