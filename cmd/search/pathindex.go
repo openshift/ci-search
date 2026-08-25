@@ -128,7 +128,10 @@ func (index *pathIndex) Load() error {
 			return nil
 		}
 		if mustExpire && expiredAt.After(info.ModTime()) {
-			os.RemoveAll(path)
+			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+				klog.Errorf("Could not remove expired file %s: %v", path, err)
+				return nil
+			}
 			// each job build has its own directory (jobs/<job>/<build-id>/...) that is
 			// never reused once written, so once its files have expired the directory
 			// itself is safe to remove. os.Remove only succeeds when the directory is
