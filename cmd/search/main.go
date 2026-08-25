@@ -676,7 +676,7 @@ func (o *options) Run() error {
 		go informer.Run(ctx.Done())
 		go func() {
 			cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
-			store.Run(ctx, lister, indexedPaths, o.NoIndex, 40)
+			store.Run(ctx, lister, o.NoIndex, 40)
 		}()
 
 		klog.Infof("Started indexing prow jobs %s", o.DeckURI)
