@@ -103,9 +103,6 @@ func (index *pathIndex) LastModified(path string) time.Time {
 	return time.Time{}
 }
 
-func (index *pathIndex) Notify(paths []string) {
-}
-
 func (index *pathIndex) Load() error {
 	ordered := make([]pathAge, 0, 1024)
 

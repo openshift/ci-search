@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -66,10 +64,6 @@ type JobStats struct {
 	Failures int
 }
 
-type PathNotifier interface {
-	Notify(paths []string)
-}
-
 func (s *DiskStore) Handler() cache.ResourceEventHandler {
 	return cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
@@ -115,7 +109,7 @@ func (s *DiskStore) QueueLen() int {
 	return s.queue.Len()
 }
 
-func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier PathNotifier, disableWrite bool, workers int) {
+func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, disableWrite bool, workers int) {
 	for i := 0; i < workers; i++ {
 		go func(i int) {
 			defer klog.V(2).Infof("Prow disk worker %d exited", i)
@@ -145,8 +139,7 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 					ctx, cancelFn := context.WithTimeout(ctx, time.Minute)
 					func() {
 						defer cancelFn()
-						paths, err := s.write(ctx, job, notifier)
-						if err != nil {
+						if err := s.write(ctx, job); err != nil {
 							if s.queue.NumRequeues(obj) > 5 {
 								s.queue.Forget(obj)
 							} else {
@@ -156,7 +149,6 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 							klog.Errorf("failed to write job: %v", err)
 							return
 						}
-						notifier.Notify(paths)
 						s.queue.Done(id)
 					}()
 				}
@@ -166,28 +158,28 @@ func (s *DiskStore) Run(ctx context.Context, accessor JobAccessor, notifier Path
 	<-ctx.Done()
 }
 
-func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) ([]string, error) {
+func (s *DiskStore) write(ctx context.Context, job *Job) error {
 	if job.Status.State == "error" && job.Status.URL == "https://github.com/kubernetes/test-infra/issues" {
 		metricScrapedJobsIgnored.Add(1)
-		return nil, nil
+		return nil
 	}
 	u, err := url.Parse(job.Status.URL)
 	if err != nil {
 		metricScrapedJobsFailed.Add(1)
-		return nil, fmt.Errorf("job %s has no valid status URL: %v", job.Name, err)
+		return fmt.Errorf("job %s has no valid status URL: %v", job.Name, err)
 	}
 
 	bucket, _, _, _, parts, err := jobPathToAttributes(u.Path, job.Status.URL)
 	if err != nil {
 		metricScrapedJobsFailed.Add(1)
-		return nil, err
+		return err
 	}
 	if len(bucket) == 0 {
 		// This typically indicates that Prow changed in an unexpected way, perhaps by altering the
 		// URL it reports to jobs.
 		klog.Infof("Job URL cannot be indexed, does not match expected structure: %s", job.Status.URL)
 		metricScrapedJobsIgnored.Add(1)
-		return nil, nil
+		return nil
 	}
 
 	build := Build{
@@ -200,12 +192,12 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	accumulator, stale := NewAccumulator(s.base, &build, job.Status.CompletionTime.Time)
 	if !stale {
 		klog.V(7).Infof("Job %s is up to date", job.Status.URL)
-		return nil, nil
+		return nil
 	}
 	if err := ReadBuild(build, accumulator); err != nil {
 		klog.Infof("Download %s failed in %s: %v", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond), err)
 		metricScrapedJobsFailed.Add(1)
-		return nil, err
+		return err
 	}
 	if err := accumulator.MarkCompleted(job.Status.CompletionTime.Time); err != nil {
 		klog.Errorf("Unable to mark job as completed: %v", err)
@@ -213,40 +205,11 @@ func (s *DiskStore) write(ctx context.Context, job *Job, notifier PathNotifier) 
 	}
 	klog.V(2).Infof("Download %s succeeded in %s", job.Status.URL, time.Now().Sub(start).Truncate(time.Millisecond))
 	metricScrapedJobs.Add(1)
-	return nil, nil
-}
-
-func (s *DiskStore) pathForJob(job *Job) string {
-	return filepath.Join(s.base, job.Spec.Job, job.Status.BuildID)
+	return nil
 }
 
 func (s *DiskStore) notifyChanged(id string) {
 	s.queue.Add(id)
-}
-
-func (s *DiskStore) Sync() error {
-	start := time.Now()
-	mustExpire := s.maxAge != 0
-	expiredAt := start.Add(-s.maxAge)
-
-	return filepath.Walk(s.base, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-
-		if mustExpire && expiredAt.After(info.ModTime()) {
-			os.Remove(path)
-			klog.V(5).Infof("File expired: %s", path)
-			return nil
-		}
-		return nil
-	})
 }
 
 func jobPathToAttributes(path, full string) (bucket, trigger, job, buildID string, parts []string, err error) {
