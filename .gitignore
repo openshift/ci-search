@@ -9,3 +9,4 @@
 coverage.out
 golangci-lint.out
 report.json
+.dccache
