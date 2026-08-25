@@ -35,6 +35,10 @@ type CommentStore struct {
 	lock sync.Mutex
 }
 
+// diskSyncInterval controls how often the persisted comment store is garbage
+// collected for expired and orphaned files.
+const diskSyncInterval = 15 * time.Minute
+
 type PersistentCommentStore interface {
 	Sync(keys []string) ([]*IssueComments, error)
 	NotifyChanged(id int)
@@ -115,6 +119,20 @@ func (s *CommentStore) Run(ctx context.Context, informer cache.SharedInformer) e
 		}
 		klog.V(5).Infof("Refreshed %d comments older than %s", count, s.refreshInterval.String())
 	}, s.refreshInterval/4)
+
+	// periodically garbage collect expired and orphaned files from disk. The initial
+	// Sync above only runs once at startup, so without this a long-running process
+	// never reclaims disk space for issues that age out after boot.
+	if s.persistedStore != nil {
+		go wait.UntilWithContext(ctx, func(ctx context.Context) {
+			list, err := s.persistedStore.Sync(nil)
+			if err != nil {
+				klog.Errorf("Unable to garbage collect persisted issue comments: %v", err)
+				return
+			}
+			klog.V(4).Infof("Garbage collected persisted issue comments, %d remain", len(list))
+		}, diskSyncInterval)
+	}
 
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
 		if err := s.run(ctx); err != nil {

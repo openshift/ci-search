@@ -132,6 +132,15 @@ func (index *pathIndex) Load() error {
 		}
 		if mustExpire && expiredAt.After(info.ModTime()) {
 			os.RemoveAll(path)
+			// each job build has its own directory (jobs/<job>/<build-id>/...) that is
+			// never reused once written, so once its files have expired the directory
+			// itself is safe to remove. os.Remove only succeeds when the directory is
+			// empty, so this is a no-op if other files remain.
+			if dir := filepath.Dir(path); dir != index.base {
+				if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+					klog.V(6).Infof("Could not remove empty job directory %s: %v", dir, err)
+				}
+			}
 			return nil
 		}
 		var indexName string
