@@ -50,6 +50,7 @@ func main() {
 	opt := &options{
 		ListenAddr:        ":8080",
 		MaxAge:            14 * 24 * time.Hour,
+		DiskGCInterval:    time.Hour,
 		JobURIPrefix:      "https://prow.ci.openshift.org/view/gs/",
 		ArtifactURIPrefix: "https://storage.googleapis.com/",
 		IndexBucket:       "test-platform-results",
@@ -74,6 +75,7 @@ func main() {
 	flags.AddGoFlag(original.Lookup("v"))
 
 	flags.DurationVar(&opt.MaxAge, "max-age", opt.MaxAge, "The maximum age of entries to keep cached. Set to 0 to keep all. Defaults to 14 days.")
+	flags.DurationVar(&opt.DiskGCInterval, "disk-gc-interval", opt.DiskGCInterval, "How often to sweep the jobs cache for empty directories left behind by expired files and remove them. Set to 0 to disable. Defaults to 1 hour.")
 	flags.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
 	flags.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
 	flags.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
@@ -109,6 +111,7 @@ type options struct {
 
 	// arguments to indexing
 	MaxAge            time.Duration
+	DiskGCInterval    time.Duration
 	Interval          time.Duration
 	GCPServiceAccount string
 	JobURIPrefix      string
@@ -703,6 +706,18 @@ func (o *options) Run() error {
 			klog.Fatalf("Unable to index: %v", err)
 		}
 	}, 3*time.Minute)
+
+	// Reclaim empty directories left behind by expired files on a slower cadence,
+	// independent of the search-index refresh above. Errors are logged rather than
+	// fatal so a transient filesystem issue never takes down the server.
+	if o.DiskGCInterval > 0 {
+		klog.Infof("Empty job directories are pruned every %s", o.DiskGCInterval)
+		go wait.Forever(func() {
+			if _, err := indexedPaths.PruneEmptyDirs(); err != nil {
+				klog.Errorf("Unable to prune empty job directories: %v", err)
+			}
+		}, o.DiskGCInterval)
+	}
 
 	o.generator, err = NewCommandGenerator(o.Path, o)
 	if err != nil {
