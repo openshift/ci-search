@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -128,18 +130,12 @@ func (index *pathIndex) Load() error {
 			return nil
 		}
 		if mustExpire && expiredAt.After(info.ModTime()) {
+			// Only expired files are removed here; the empty directories they leave
+			// behind are reclaimed separately by PruneEmptyDirs. Deleting a file
+			// bumps its parent directory's mtime to the deletion time, so an
+			// age-based cutoff can never catch those directories.
 			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 				klog.Errorf("Could not remove expired file %s: %v", path, err)
-				return nil
-			}
-			// each job build has its own directory (jobs/<job>/<build-id>/...) that is
-			// never reused once written, so once its files have expired the directory
-			// itself is safe to remove. os.Remove only succeeds when the directory is
-			// empty, so this is a no-op if other files remain.
-			if dir := filepath.Dir(path); dir != index.base {
-				if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
-					klog.V(6).Infof("Could not remove empty job directory %s: %v", dir, err)
-				}
 			}
 			return nil
 		}
@@ -184,6 +180,70 @@ func (index *pathIndex) Load() error {
 	index.stats = stats
 
 	return nil
+}
+
+// emptyDirGracePeriod is how long a directory must have gone untouched before
+// PruneEmptyDirs will remove it. The DiskStore writer creates a build directory
+// (os.MkdirAll) before downloading and writing its files, so a directory that is
+// still empty this long after its last modification is treated as orphaned (its
+// files aged out) rather than mid-write. It must stay well below --max-age.
+const emptyDirGracePeriod = 30 * time.Minute
+
+// PruneEmptyDirs walks the index base and removes empty directories bottom-up,
+// reclaiming the build/job/PR directories left behind after Load removes expired
+// files. Directory age relative to --max-age is intentionally ignored: deleting a
+// build's last file bumps that directory's mtime to the deletion time, so an
+// age-based cutoff would never catch recently-emptied directories. Instead any
+// directory left empty and untouched for emptyDirGracePeriod is removed.
+//
+// Directories are removed deepest-first (a child path is always longer than its
+// parent) so a chain of now-empty ancestors collapses fully in a single pass;
+// os.Remove only succeeds on an empty directory, so populated directories are
+// left untouched.
+func (index *pathIndex) PruneEmptyDirs() (removed int, err error) {
+	start := time.Now()
+	staleBefore := start.Add(-emptyDirGracePeriod)
+
+	dirs := make([]string, 0, 1024)
+	defer func() {
+		klog.Infof("Pruned %d empty job directories (of %d candidates) in %s: %v", removed, len(dirs), time.Now().Sub(start).Truncate(time.Millisecond), err)
+	}()
+
+	err = walk.Walk(index.base, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.IsDir() && path != index.base && staleBefore.After(info.ModTime()) {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	// Remove deepest directories first so that emptied parents become removable
+	// within the same pass. A child path is always longer than its parent, so
+	// ordering by descending path length guarantees children are visited first.
+	sort.Slice(dirs, func(i, j int) bool {
+		return len(dirs[i]) > len(dirs[j])
+	})
+	for _, dir := range dirs {
+		if err := os.Remove(dir); err != nil {
+			// ENOTEMPTY simply means the directory still holds files or
+			// not-yet-stale children; that is expected and not worth logging.
+			// Anything else (permission, I/O) is unexpected and logged loudly.
+			if !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
+				klog.Errorf("Could not remove empty job directory %s: %v", dir, err)
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (i *pathIndex) FilenamesForSearchType(searchType string) []string {
