@@ -235,8 +235,9 @@ func (index *pathIndex) PruneEmptyDirs() (removed int, err error) {
 		if err := os.Remove(dir); err != nil {
 			// ENOTEMPTY simply means the directory still holds files or
 			// not-yet-stale children; that is expected and not worth logging.
+			// Anything else (permission, I/O) is unexpected and logged loudly.
 			if !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
-				klog.V(4).Infof("Could not remove empty job directory %s: %v", dir, err)
+				klog.Errorf("Could not remove empty job directory %s: %v", dir, err)
 			}
 			continue
 		}
