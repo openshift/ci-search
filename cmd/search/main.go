@@ -78,7 +78,7 @@ func main() {
 	flags.DurationVar(&opt.DiskGCInterval, "disk-gc-interval", opt.DiskGCInterval, "How often to sweep the jobs cache for empty directories left behind by expired files and remove them. Set to 0 to disable. Defaults to 1 hour.")
 	flags.DurationVar(&opt.Interval, "interval", opt.Interval, "(Disabled) The interval to index jobs.")
 	flags.StringVar(&opt.ConfigPath, "config", opt.ConfigPath, "(Disabled) Path on disk to a testgrid config for indexing.")
-	flags.StringVar(&opt.GCPServiceAccount, "gcp-service-account", opt.GCPServiceAccount, "(Disabled) Path to a GCP service account file.")
+	flags.StringVar(&opt.GoogleServiceAccountCredentialFile, "google-service-account-credential-file", os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), "Location of a credential file described by https://cloud.google.com/docs/authentication/production. Defaults to GOOGLE_APPLICATION_CREDENTIALS.")
 	flags.StringVar(&opt.JobURIPrefix, "job-uri-prefix", opt.JobURIPrefix, "URI prefix for converting job-detail pages to index names.  For example, https://prow.ci.openshift.org/view/gs/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has an index name of test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 with the default job-URI prefix.")
 	flags.StringVar(&opt.ArtifactURIPrefix, "artifact-uri-prefix", opt.ArtifactURIPrefix, "URI prefix for artifacts.  For example, test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309 has build logs at https://storage.googleapis.com/test-platform-results/logs/release-openshift-origin-installer-e2e-aws-4.1/309/build-log.txt with the default artifact-URI prefix.")
 	flags.StringVar(&opt.DeckURI, "deck-uri", opt.DeckURI, "URL to the Deck server to index prow job failures into search.")
@@ -110,15 +110,15 @@ type options struct {
 	Path       string
 
 	// arguments to indexing
-	MaxAge            time.Duration
-	DiskGCInterval    time.Duration
-	Interval          time.Duration
-	GCPServiceAccount string
-	JobURIPrefix      string
-	ArtifactURIPrefix string
-	ConfigPath        string
-	DeckURI           string
-	IndexBucket       string
+	MaxAge                             time.Duration
+	DiskGCInterval                     time.Duration
+	Interval                           time.Duration
+	GoogleServiceAccountCredentialFile string
+	JobURIPrefix                       string
+	ArtifactURIPrefix                  string
+	ConfigPath                         string
+	DeckURI                            string
+	IndexBucket                        string
 
 	MetricDBPath string
 	MetricMaxAge time.Duration
@@ -652,7 +652,11 @@ func (o *options) Run() error {
 		c := prow.NewClient(*deckURI)
 		c.Client = &http.Client{Transport: rt}
 
-		gcsClient, err := storage.NewClient(context.Background(), gcpoption.WithoutAuthentication())
+		gcsOptions := []gcpoption.ClientOption{gcpoption.WithoutAuthentication()}
+		if o.GoogleServiceAccountCredentialFile != "" {
+			gcsOptions = []gcpoption.ClientOption{gcpoption.WithCredentialsFile(o.GoogleServiceAccountCredentialFile)}
+		}
+		gcsClient, err := storage.NewClient(context.Background(), gcsOptions...)
 		if err != nil {
 			klog.Exitf("Unable to build gcs client: %v", err)
 		}
